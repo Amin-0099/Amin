@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "AMIN AI DESK"
+description = "A responsive AI analysis dashboard with a coordinating Master Agent, ten simulated agents, analysis activity, and consolidated reports. No live financial integrations or real trading actions."
+version = "1.0.0"
+id = "artifacts/amin-ai-desk"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23264
+
+[services.development]
+run = "pnpm --filter @workspace/amin-ai-desk run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/amin-ai-desk", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/amin-ai-desk/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23264"
+BASE_PATH = "/"
