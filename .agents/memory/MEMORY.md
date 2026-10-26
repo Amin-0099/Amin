@@ -1,0 +1,1 @@
+- [Simulation-only analysis](simulation-only-analysis.md) — Keep AMIN AI DESK results simulated; do not connect financial services or execute trades.

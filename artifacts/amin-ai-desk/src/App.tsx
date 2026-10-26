@@ -22,16 +22,19 @@ import {
 } from 'lucide-react';
 import {
   type Agent,
+  type FinalReport,
+  createFinalReport,
+  createRiskAssessment,
+  createSpecialistResult,
+  createVerificationReview,
   agentBlueprints,
   createIdleAgents,
-  createSampleReport,
-  sampleResults,
-  stagedAgentIds,
+  firstWaveAgentIds,
+  getMarketScenario,
 } from './simulation';
 import './index.css';
 
 type ActivityEntry = { id: number; agent: string; message: string; time: string };
-type Report = ReturnType<typeof createSampleReport>;
 
 const defaultQuestion = '';
 
@@ -39,7 +42,7 @@ function App() {
   const [question, setQuestion] = useState(defaultQuestion);
   const [agents, setAgents] = useState<Agent[]>(createIdleAgents);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
-  const [report, setReport] = useState<Report | null>(null);
+  const [report, setReport] = useState<FinalReport | null>(null);
   const [running, setRunning] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activeNav, setActiveNav] = useState('Overview');
@@ -81,51 +84,126 @@ function App() {
     if (timerRef.current) clearTimeout(timerRef.current);
     const currentRun = ++runRef.current;
     const context = question.trim();
+    const scenario = getMarketScenario(context);
+    const findings: Partial<Record<(typeof firstWaveAgentIds)[number], ReturnType<typeof createSpecialistResult>>> = {};
+
     setReport(null);
     setActivity([]);
-    setAgents(createIdleAgents().map((agent) => (
-      agent.id === 'master' ? { ...agent, status: 'Working' } : agent
-    )));
-    setRunning(true);
-    addActivity('Master Agent', 'Analysis started. Delegating the question across nine specialist lenses.');
-
-    const runStep = (stepIndex: number) => {
-      if (runRef.current !== currentRun) return;
-      if (stepIndex >= stagedAgentIds.length) {
-        setAgents((current) => current.map((agent) => (
-          agent.id === 'master'
-            ? {
-                ...agent,
-                status: 'Finished',
-                result: 'Synthesis complete. Findings reconciled into a transparent, simulated report.',
-              }
-            : agent
-        )));
-        const nextReport = createSampleReport(context);
-        setReport(nextReport);
-        setRunning(false);
-        addActivity('Master Agent', 'Synthesis complete. A simulated report is ready for review.');
-        return;
+    setAgents(createIdleAgents().map((agent) => {
+      if (agent.id === 'master') {
+        return { ...agent, status: 'Working', result: `Request received: ${context}` };
       }
-      const id = stagedAgentIds[stepIndex];
+      if ((firstWaveAgentIds as readonly string[]).includes(agent.id)) {
+        return { ...agent, status: 'Working' };
+      }
+      return agent;
+    }));
+    setRunning(true);
+    addActivity('Master Agent', `Request received: “${context}”`);
+    addActivity('Master Agent', 'Delegating the question to six specialist analysis agents.');
+
+    firstWaveAgentIds.forEach((id) => {
       const definition = agentBlueprints.find((agent) => agent.id === id);
-      if (!definition) return;
+      if (definition) addActivity(definition.name, 'Started simulated review.');
+    });
+
+    timerRef.current = setTimeout(() => {
+      if (runRef.current !== currentRun) return;
+
+      firstWaveAgentIds.forEach((id) => {
+        findings[id] = createSpecialistResult(id, scenario);
+      });
       setAgents((current) => current.map((agent) => (
-        agent.id === id ? { ...agent, status: 'Working' } : agent
+        firstWaveAgentIds.includes(agent.id as (typeof firstWaveAgentIds)[number])
+          ? {
+              ...agent,
+              status: 'Complete',
+              result: findings[agent.id as (typeof firstWaveAgentIds)[number]]?.summary ?? '',
+            }
+          : agent
       )));
-      addActivity(definition.name, `Reviewing the question through ${definition.specialty.toLowerCase()}.`);
+      firstWaveAgentIds.forEach((id) => {
+        const definition = agentBlueprints.find((agent) => agent.id === id);
+        if (definition) addActivity(definition.name, `Complete — ${findings[id]?.summary}`);
+      });
+
+      const riskAgent = agentBlueprints.find((agent) => agent.id === 'risk');
+      setAgents((current) => current.map((agent) => (
+        agent.id === 'risk' ? { ...agent, status: 'Working', result: '' } : agent
+      )));
+      if (riskAgent) addActivity(riskAgent.name, 'Started a separate downside and evidence-risk assessment.');
+
       timerRef.current = setTimeout(() => {
         if (runRef.current !== currentRun) return;
-        const result = sampleResults[id] ?? 'Sample review complete.';
+        const riskAssessment = createRiskAssessment(scenario);
         setAgents((current) => current.map((agent) => (
-          agent.id === id ? { ...agent, status: 'Finished', result } : agent
+          agent.id === 'risk'
+            ? { ...agent, status: 'Complete', result: riskAssessment.assessment }
+            : agent
         )));
-        addActivity(definition.name, result);
-        timerRef.current = setTimeout(() => runStep(stepIndex + 1), 480);
-      }, 820);
-    };
+        if (riskAgent) addActivity(riskAgent.name, `Complete — ${riskAssessment.assessment}`);
 
-    timerRef.current = setTimeout(() => runStep(0), 450);
+        const verifier = agentBlueprints.find((agent) => agent.id === 'verification');
+        setAgents((current) => current.map((agent) => (
+          agent.id === 'verification' ? { ...agent, status: 'Working', result: '' } : agent
+        )));
+        if (verifier) {
+          addActivity(
+            verifier.name,
+            'Reviewing all six specialist findings and the Risk Analyst assessment for conflicts and weak evidence.',
+          );
+        }
+
+        timerRef.current = setTimeout(() => {
+          if (runRef.current !== currentRun) return;
+          const verification = createVerificationReview(findings, riskAssessment);
+          setAgents((current) => current.map((agent) => (
+            agent.id === 'verification'
+              ? { ...agent, status: 'Complete', result: verification.summary }
+              : agent
+          )));
+          if (verifier) {
+            addActivity(
+              verifier.name,
+              `Complete — ${verification.summary} ${verification.contradictions[0]}`,
+            );
+          }
+
+          const decisionAgent = agentBlueprints.find((agent) => agent.id === 'decision');
+          setAgents((current) => current.map((agent) => (
+            agent.id === 'decision' ? { ...agent, status: 'Working', result: '' } : agent
+          )));
+          if (decisionAgent) {
+            addActivity(
+              decisionAgent.name,
+              'Started final synthesis using verified findings and the separate risk assessment.',
+            );
+          }
+
+          timerRef.current = setTimeout(() => {
+            if (runRef.current !== currentRun) return;
+            const nextReport = createFinalReport(context, scenario, riskAssessment, verification);
+            setAgents((current) => current.map((agent) => {
+              if (agent.id === 'decision') {
+                return { ...agent, status: 'Complete', result: nextReport.conclusion };
+              }
+              if (agent.id === 'master') {
+                return {
+                  ...agent,
+                  status: 'Complete',
+                  result: 'Coordination complete. The report combines specialist findings, verification, and risk assessment.',
+                };
+              }
+              return agent;
+            }));
+            setReport(nextReport);
+            setRunning(false);
+            if (decisionAgent) addActivity(decisionAgent.name, `Complete — ${nextReport.conclusion}`);
+            addActivity('Master Agent', 'Final simulated report is complete and ready for review.');
+          }, 900);
+        }, 900);
+      }, 850);
+    }, 1300);
   };
 
   const stopAnalysis = () => {
@@ -134,7 +212,7 @@ function App() {
     if (timerRef.current) clearTimeout(timerRef.current);
     setRunning(false);
     setAgents((current) => current.map((agent) => (
-      agent.status === 'Working' ? { ...agent, status: 'Idle' } : agent
+      agent.status === 'Working' ? { ...agent, status: 'Idle', result: '' } : agent
     )));
     addActivity('Master Agent', 'Run stopped. Completed sample findings are retained; unfinished agents returned to idle.');
   };
@@ -150,7 +228,10 @@ function App() {
     setQuestion('What market conditions would confirm a sustained move in the current cycle?');
   };
 
-  const completedCount = agents.filter((agent) => agent.status === 'Finished').length;
+  const completedCount = agents.filter((agent) => agent.status === 'Complete').length;
+  const workingAgentNames = new Set(
+    agents.filter((agent) => agent.status === 'Working').map((agent) => agent.name),
+  );
   const statusLabel = running ? 'ANALYSIS IN PROGRESS' : report ? 'RUN COMPLETE' : 'WORKSPACE READY';
 
   return (
@@ -295,7 +376,7 @@ function App() {
                     </article>
                   ))}
                 </div>
-                <div className="agent-legend"><span><i className="legend-idle" /> Idle</span><span><i className="legend-working" /> Working</span><span><i className="legend-finished" /> Finished</span><small>All findings in this prototype are generated locally.</small></div>
+                <div className="agent-legend"><span><i className="legend-idle" /> Idle</span><span><i className="legend-working" /> Working</span><span><i className="legend-complete" /> Complete</span><small>All findings in this prototype are generated locally.</small></div>
               </section>
 
               <section className="report-section" id="final-report">
@@ -311,16 +392,57 @@ function App() {
                       <div className="report-index">AM / 01</div>
                     </div>
                     <div className="report-question"><span>QUESTION CONTEXT</span><p data-testid="text-report-question">{report.question}</p></div>
-                    <p className="report-summary" data-testid="text-report-summary">{report.summary}</p>
-                    <div className="signal-grid">
-                      {report.signals.map((signal) => (
-                        <div className={`signal-item signal-${signal.tone}`} key={signal.label} data-testid={`signal-${signal.label.toLowerCase().replaceAll(' ', '-')}`}>
-                          <span>{signal.label}</span><b>{signal.value}</b>
-                          <i>{signal.tone === 'teal' ? <ArrowUpRight size={15} /> : signal.tone === 'amber' ? <ArrowDownRight size={15} /> : <Activity size={15} />}</i>
-                        </div>
-                      ))}
+                    <section className="report-summary-block" data-testid="text-report-summary">
+                      <h4>SUMMARY</h4>
+                      <p>{report.summary}</p>
+                    </section>
+                    <div className="report-insight-grid">
+                      <section className="report-detail report-bullish" data-testid="list-bullish-signals">
+                        <h4><ArrowUpRight size={15} /> BULLISH SIGNALS</h4>
+                        <ul>{report.bullishSignals.map((signal) => <li key={signal}>{signal}</li>)}</ul>
+                      </section>
+                      <section className="report-detail report-bearish" data-testid="list-bearish-signals">
+                        <h4><ArrowDownRight size={15} /> BEARISH SIGNALS</h4>
+                        <ul>{report.bearishSignals.map((signal) => <li key={signal}>{signal}</li>)}</ul>
+                      </section>
                     </div>
-                    <div className="watch-block"><div className="watch-title"><span className="watch-mark" /> WHAT TO WATCH</div><p>{report.watch}</p></div>
+                    <section className="report-detail report-risk" data-testid="content-risk-assessment">
+                      <h4><ShieldAlert size={15} /> RISK ANALYST ASSESSMENT</h4>
+                      <p>{report.riskAssessment}</p>
+                      <ul>{report.risks.map((risk) => <li key={risk}>{risk}</li>)}</ul>
+                    </section>
+                    <section className="report-detail report-verification" data-testid="content-verification-review">
+                      <h4><CheckCheck size={15} /> VERIFICATION REVIEW</h4>
+                      <p>{report.verification.summary}</p>
+                      <strong>Contradictions and gaps</strong>
+                      <ul>
+                        {[...report.verification.contradictions, ...report.verification.weakEvidence].map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </section>
+                    <section className="report-confidence" data-testid="content-confidence-score">
+                      <div className="confidence-copy">
+                        <span>CONFIDENCE SCORE</span>
+                        <strong>{report.confidenceScore}<small> / 100</small></strong>
+                        <b>{report.confidenceLabel}</b>
+                      </div>
+                      <div
+                        className="confidence-track"
+                        role="progressbar"
+                        aria-label="Simulated confidence score"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={report.confidenceScore}
+                      >
+                        <span style={{ width: `${report.confidenceScore}%` }} />
+                      </div>
+                      <p>This score reflects only internal consistency of the mock profile, not confidence in a real market outcome.</p>
+                    </section>
+                    <section className="report-conclusion" data-testid="text-final-conclusion">
+                      <span>FINAL SIMULATED CONCLUSION</span>
+                      <p>{report.conclusion}</p>
+                    </section>
                     <div className="report-caveat" data-testid="text-report-disclaimer"><ShieldAlert size={15} /><p>{report.caveat}</p></div>
                     <div className="report-foot"><span>Generated locally · Sample outputs</span><span>Context retained from your question</span></div>
                   </article>
@@ -341,7 +463,7 @@ function App() {
               <div className="activity-sticky">
                 <div className="activity-header">
                   <div><div className="section-kicker"><span className="step-index">03</span><span>LIVE TRACE</span></div><h2>Agent activity</h2></div>
-                  {running ? <span className="activity-live"><i /> LIVE</span> : <span className="activity-local">LOCAL</span>}
+                  {running ? <span className="activity-live"><i /> RUNNING</span> : <span className="activity-local">LOCAL</span>}
                 </div>
                 <div className="activity-panel panel" data-testid="activity-feed">
                   {activity.length === 0 ? (
@@ -355,15 +477,18 @@ function App() {
                     <>
                       <div className="feed-label"><span>RUN TIMELINE</span><span>{activity.length.toString().padStart(2, '0')} EVENTS</span></div>
                       <ol className="activity-list">
-                        {activity.map((entry, index) => (
-                          <li className={`activity-entry ${index === 0 && running ? 'activity-current' : ''}`} key={entry.id} data-testid={`activity-entry-${entry.id}`}>
-                            <span className="timeline-dot">{index === 0 && running ? <i /> : <Check size={11} />}</span>
+                        {activity.map((entry) => {
+                          const isWorking = running && workingAgentNames.has(entry.agent);
+                          return (
+                          <li className={`activity-entry ${isWorking ? 'activity-current' : ''}`} key={entry.id} data-testid={`activity-entry-${entry.id}`}>
+                            <span className="timeline-dot">{isWorking ? <i /> : <Check size={11} />}</span>
                             <div className="activity-entry-content">
                               <div className="activity-entry-top"><b>{entry.agent}</b><time>{entry.time}</time></div>
                               <p>{entry.message}</p>
                             </div>
                           </li>
-                        ))}
+                          );
+                        })}
                       </ol>
                       <div className="activity-foot">{running ? <><span className="activity-pulse" /> Sequence running</> : <><Check size={12} /> Local event log</>}</div>
                     </>
