@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: agents
+    description: Agent analysis operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,55 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /market-scanner/analyze:
+    post:
+      operationId: analyzeMarketScanner
+      tags: [agents]
+      summary: Analyze a market question with the Market Scanner
+      description: Sends a question to the server-configured Gemini model. API credentials are never returned to the client.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketScannerRequest"
+      responses:
+        "200":
+          description: Gemini-generated Market Scanner analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketScannerResponse"
+        "400":
+          description: The question is invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketScannerError"
+        "429":
+          description: Gemini quota or rate limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketScannerError"
+        "502":
+          description: Gemini could not provide an analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketScannerError"
+        "503":
+          description: Gemini is not configured or is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketScannerError"
+        "504":
+          description: Gemini request timed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketScannerError"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +84,30 @@ components:
           type: string
       required:
         - status
+    MarketScannerRequest:
+      type: object
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 2000
+      required:
+        - question
+    MarketScannerResponse:
+      type: object
+      properties:
+        analysis:
+          type: string
+      required:
+        - analysis
+    MarketScannerError:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+      required:
+        - error
+        - code
 

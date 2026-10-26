@@ -1,4 +1,4 @@
-export type AgentStatus = 'Idle' | 'Working' | 'Complete';
+export type AgentStatus = 'Idle' | 'Working' | 'Complete' | 'Error';
 export type MarketScenario = 'constructive' | 'cautious' | 'mixed';
 
 export type Agent = {
@@ -7,6 +7,7 @@ export type Agent = {
   specialty: string;
   status: AgentStatus;
   result: string;
+  aiLive: boolean;
 };
 
 export type RiskAssessment = {
@@ -39,6 +40,7 @@ export type FinalReport = {
   risks: string[];
   confidenceScore: number;
   confidenceLabel: string;
+  marketScannerAnalysis: string | null;
   conclusion: string;
   verification: VerificationReview;
   caveat: string;
@@ -66,6 +68,14 @@ export const firstWaveAgentIds = [
   'momentum',
 ] as const;
 
+export const simulatedFirstWaveAgentIds = [
+  'news',
+  'social',
+  'onchain',
+  'technical',
+  'momentum',
+] as const;
+
 const scenarioProfiles: Record<
   MarketScenario,
   {
@@ -78,11 +88,11 @@ const scenarioProfiles: Record<
 > = {
   constructive: {
     summary:
-      'The local demo profile is constructive but not confirmed. The simulated market, technical, and momentum perspectives lean positive, while other lenses remain neutral.',
+      'The local demo profile is constructive but not confirmed. Simulated technical and momentum perspectives lean positive, while other simulated lenses remain neutral.',
     bullishSignals: [
-      'Market structure and technical trend lean constructive in the demo profile.',
-      'Momentum and sentiment offer a modest positive signal.',
-      'Several simulated perspectives align on possible continuation if confirmation appears.',
+      'Simulated technical and momentum perspectives lean constructive; no chart or price data was checked.',
+      'The sample sentiment view offers a modest positive signal.',
+      'Several simulated perspectives align on possible continuation, but no live feed confirms it.',
     ],
     bearishSignals: [
       'News and on-chain perspectives remain neutral rather than confirming the positive view.',
@@ -95,13 +105,13 @@ const scenarioProfiles: Record<
   },
   cautious: {
     summary:
-      'The local demo profile is cautious. Simulated market, news, technical, and momentum perspectives lean defensive, while sentiment is not a reliable counter-signal.',
+      'The local demo profile is cautious. Simulated news, technical, and momentum perspectives lean defensive, while sentiment is not a reliable counter-signal.',
     bullishSignals: [
       'The simulated sentiment perspective does not show strong downside conviction.',
       'A neutral on-chain profile leaves room for conditions to stabilize.',
     ],
     bearishSignals: [
-      'Market structure and technical perspectives lean defensive in the demo profile.',
+      'Simulated technical perspectives lean defensive in the demo profile.',
       'Momentum and the sample narrative do not confirm a recovery.',
       'No real price, volume, news, sentiment, or network evidence was checked.',
     ],
@@ -111,10 +121,10 @@ const scenarioProfiles: Record<
   },
   mixed: {
     summary:
-      'The local demo profile is mixed. Sentiment and momentum lean constructive, while the technical view is cautious and the other perspectives do not resolve the disagreement.',
+      'The local demo profile is mixed. Sentiment and momentum lean constructive, while the technical view is cautious and the other simulated perspectives do not resolve the disagreement.',
     bullishSignals: [
       'Simulated sentiment and momentum show modest constructive signals.',
-      'The sample market and on-chain perspectives do not identify a strong downside confirmation.',
+      'The sample on-chain perspective does not identify a strong downside confirmation.',
     ],
     bearishSignals: [
       'The simulated technical perspective does not confirm the positive sentiment and momentum.',
@@ -162,25 +172,18 @@ export function createIdleAgents(): Agent[] {
     ...agent,
     status: 'Idle',
     result: '',
+    aiLive: false,
   }));
 }
 
 export function createSpecialistResult(
-  agentId: (typeof firstWaveAgentIds)[number],
+  agentId: (typeof simulatedFirstWaveAgentIds)[number],
   scenario: MarketScenario,
 ): SpecialistFinding {
   const findings: Record<
-    (typeof firstWaveAgentIds)[number],
+    (typeof simulatedFirstWaveAgentIds)[number],
     Record<MarketScenario, string>
   > = {
-    market: {
-      constructive:
-        'Simulated market read: structure leans constructive, but the demo has no price or liquidity feed to confirm it.',
-      cautious:
-        'Simulated market read: structure leans defensive; there is no live price or liquidity data to validate that view.',
-      mixed:
-        'Simulated market read: conditions are unresolved. No price or liquidity feed is connected.',
-    },
     news: {
       constructive:
         'Simulated news read: the sample narrative is modestly supportive. No headlines were retrieved or verified.',
@@ -225,10 +228,9 @@ export function createSpecialistResult(
 
   const stances: Record<
     MarketScenario,
-    Record<(typeof firstWaveAgentIds)[number], SpecialistStance>
+    Record<(typeof simulatedFirstWaveAgentIds)[number], SpecialistStance>
   > = {
     constructive: {
-      market: 'bullish',
       news: 'neutral',
       social: 'bullish',
       onchain: 'neutral',
@@ -236,7 +238,6 @@ export function createSpecialistResult(
       momentum: 'bullish',
     },
     cautious: {
-      market: 'bearish',
       news: 'bearish',
       social: 'neutral',
       onchain: 'neutral',
@@ -244,7 +245,6 @@ export function createSpecialistResult(
       momentum: 'bearish',
     },
     mixed: {
-      market: 'neutral',
       news: 'neutral',
       social: 'bullish',
       onchain: 'neutral',
@@ -252,8 +252,7 @@ export function createSpecialistResult(
       momentum: 'bullish',
     },
   };
-  const evidenceNotes: Record<(typeof firstWaveAgentIds)[number], string> = {
-    market: 'No market or liquidity source was connected.',
+  const evidenceNotes: Record<(typeof simulatedFirstWaveAgentIds)[number], string> = {
     news: 'No headlines or source timestamps were retrieved.',
     social: 'No posts or social-platform source data were analyzed.',
     onchain: 'No blockchain or wallet source data was queried.',
@@ -279,7 +278,7 @@ export function createRiskAssessment(
         : 'Conflicting demo signals increase the risk of drawing a directional conclusion from incomplete evidence.';
 
   return {
-    assessment: `${scenarioRisk} All inputs are simulated, and the absence of live sources is itself a major evidence risk.`,
+    assessment: `${scenarioRisk} This Risk Analyst output is simulated and has no live price, volatility, liquidity, or event data behind it.`,
     risks: [
       'No live price, volume, headline, social, or on-chain sources are connected.',
       'The sample profile is selected from wording in the question, not observed market conditions.',
@@ -295,6 +294,7 @@ export function createVerificationReview(
   riskAssessment: RiskAssessment,
 ): VerificationReview {
   const reviewedIds = firstWaveAgentIds.filter((id) => findings[id]);
+  const missingIds = firstWaveAgentIds.filter((id) => !findings[id]);
   const bullishIds = reviewedIds.filter((id) => findings[id]?.stance === 'bullish');
   const bearishIds = reviewedIds.filter((id) => findings[id]?.stance === 'bearish');
   const neutralIds = reviewedIds.filter((id) => findings[id]?.stance === 'neutral');
@@ -317,14 +317,18 @@ export function createVerificationReview(
   const evidenceGaps = reviewedIds
     .map((id) => findings[id]?.evidenceNote)
     .filter((note): note is string => Boolean(note));
+  const missingNotes = missingIds.map((id) => {
+    const name = agentBlueprints.find((agent) => agent.id === id)?.name ?? id;
+    return `${name} returned no result and was excluded rather than replaced with mock analysis.`;
+  });
   const directionalNote = bullishIds.length && bearishIds.length
     ? 'The findings disagree directionally; the disagreement is retained rather than averaged away.'
-    : 'The available simulated stances are directionally closer, but alignment alone does not make them verified.';
+    : 'The available specialist stances are directionally closer, but alignment alone does not make them verified.';
 
   return {
-    summary: `Reviewed ${reviewedIds.length} specialist outputs and the separate Risk Analyst assessment. ${directionalNote} No claim can be verified against live evidence.`,
+    summary: `Reviewed ${reviewedIds.length} specialist outputs and the separate Risk Analyst assessment. ${directionalNote}${missingIds.length ? ` ${missingNotes.join(' ')}` : ''} No claim can be verified against live evidence.`,
     contradictions,
-    weakEvidence: [...evidenceGaps, riskAssessment.evidenceNote],
+    weakEvidence: [...evidenceGaps, ...missingNotes, riskAssessment.evidenceNote],
   };
 }
 
@@ -333,10 +337,15 @@ export function createFinalReport(
   scenario: MarketScenario,
   riskAssessment: RiskAssessment,
   verification: VerificationReview,
+  marketScannerAnalysis: string | null,
 ): FinalReport {
   const profile = scenarioProfiles[scenario];
+  const marketScannerNote = marketScannerAnalysis
+    ? 'The report includes a Gemini-generated Market Scanner response based on the question only; it has no live market feed.'
+    : 'The Market Scanner did not return an AI response, and no mock market result was substituted.';
   const conclusion = [
     profile.conclusion,
+    marketScannerNote,
     verification.summary,
     `Priority risk: ${riskAssessment.risks[0]}`,
   ].join(' ');
@@ -347,16 +356,16 @@ export function createFinalReport(
       scenario === 'mixed'
         ? 'Conflicting signals remain unverified'
         : 'A simulated view requiring confirmation',
-    summary: `${profile.summary} Verification found weak evidence: ${verification.summary}`,
+    summary: `${profile.summary} ${marketScannerNote} Verification found weak evidence: ${verification.summary}`,
     bullishSignals: profile.bullishSignals,
     bearishSignals: profile.bearishSignals,
     riskAssessment: riskAssessment.assessment,
     risks: riskAssessment.risks,
     confidenceScore: profile.confidenceScore,
     confidenceLabel: 'Low · demo consistency only',
+    marketScannerAnalysis,
     conclusion,
     verification,
-    caveat:
-      'This report is generated from local mock profiles selected using the question text. It does not use live market data, is not financial advice, and does not execute trades.',
+    caveat: `Gemini generated the Market Scanner text from the submitted question only; no live market data was retrieved. All other agent and risk outputs are local mock profiles${marketScannerAnalysis ? '' : ', and no mock Market Scanner output was substituted'}. This is not financial advice and does not execute trades.`,
   };
 }
