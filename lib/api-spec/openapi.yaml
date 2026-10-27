@@ -3,7 +3,7 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: AMIN AI DESK analysis, market radar, and paper-trading API
 servers:
   - url: /api
     description: Base API path
@@ -12,6 +12,12 @@ tags:
     description: Health operations
   - name: agents
     description: Agent analysis operations
+  - name: market
+    description: Public market data
+  - name: paper
+    description: Simulated paper portfolio
+  - name: settings
+    description: User preferences
 paths:
   /healthz:
     get:
@@ -75,6 +81,269 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MarketScannerError"
+  /analysis/run:
+    post:
+      operationId: startAnalysisRun
+      tags: [agents]
+      summary: Start a server-orchestrated analysis run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalysisRunRequest"
+      responses:
+        "202":
+          description: Run accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisRunStart"
+        "400":
+          description: Invalid question, asset, or account identifier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    get:
+      operationId: getAnalysisRun
+      tags: [agents]
+      summary: Get the latest status and agent results for a run
+      parameters:
+        - name: runId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: accountId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Run and currently available results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisRun"
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /analysis/run/stop:
+    post:
+      operationId: stopAnalysisRun
+      tags: [agents]
+      summary: Stop an in-progress run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StopAnalysisRunRequest"
+      responses:
+        "200":
+          description: Run stop status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisRunStart"
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /analysis/history:
+    get:
+      operationId: getAnalysisHistory
+      tags: [agents]
+      summary: List recent analysis runs for an account
+      parameters:
+        - name: accountId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: Recent runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisHistory"
+  /radar:
+    get:
+      operationId: getRadar
+      tags: [market]
+      summary: Get source-backed radar data for supported assets
+      responses:
+        "200":
+          description: Radar with explicit source freshness
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadarResponse"
+  /paper/portfolio:
+    get:
+      operationId: getPaperPortfolio
+      tags: [paper]
+      summary: Get the demo portfolio, positions, history, and performance
+      parameters:
+        - name: accountId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Paper portfolio snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperPortfolio"
+  /paper/trades:
+    post:
+      operationId: openPaperTrade
+      tags: [paper]
+      summary: Open a demo position linked to an analysis run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenPaperTradeRequest"
+      responses:
+        "201":
+          description: Demo position opened
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperTradeResult"
+        "400":
+          description: Invalid order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Insufficient demo balance or signal is not actionable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "422":
+          description: Current market price is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /paper/trades/{positionId}/close:
+    post:
+      operationId: closePaperTrade
+      tags: [paper]
+      summary: Close an open demo position at the latest available price
+      parameters:
+        - name: positionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaperAccountRequest"
+      responses:
+        "200":
+          description: Demo position closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperTradeResult"
+        "404":
+          description: Position not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "422":
+          description: Current market price is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /paper/reset:
+    post:
+      operationId: resetPaperPortfolio
+      tags: [paper]
+      summary: Reset demo capital and clear paper-trading history
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPaperRequest"
+      responses:
+        "200":
+          description: Demo portfolio reset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperPortfolio"
+  /settings:
+    get:
+      operationId: getDeskSettings
+      tags: [settings]
+      summary: Get paper account and scoring settings
+      parameters:
+        - name: accountId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Current settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeskSettings"
+    put:
+      operationId: updateDeskSettings
+      tags: [settings]
+      summary: Update paper capital and scoring weights
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDeskSettingsRequest"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeskSettings"
 components:
   schemas:
     HealthStatus:
@@ -110,4 +379,574 @@ components:
       required:
         - error
         - code
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+      required: [error, code]
+    AssetCode:
+      type: string
+      enum: [BTC, ETH, SOL, BNB, XRP, ADA, DOGE, AVAX, LINK, LTC, COIN, MSTR, NVDA, ASML, TSM, AAPL, MSFT, DAX, XAU, OIL]
+    DataStatus:
+      type: string
+      enum: [live, stale, missing]
+    AgentStatus:
+      type: string
+      enum: [idle, working, complete, error]
+    AgentStance:
+      type: string
+      enum: [bullish, bearish, neutral, not_evaluable]
+    AnalysisRunStatus:
+      type: string
+      enum: [queued, running, complete, error, stopped]
+    AnalysisRunRequest:
+      type: object
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        asset:
+          $ref: "#/components/schemas/AssetCode"
+        question:
+          type: string
+          minLength: 1
+          maxLength: 2000
+      required: [accountId, asset, question]
+    AnalysisRunStart:
+      type: object
+      properties:
+        runId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/AnalysisRunStatus"
+      required: [runId, status]
+    StopAnalysisRunRequest:
+      type: object
+      properties:
+        runId:
+          type: string
+          format: uuid
+        accountId:
+          type: string
+          format: uuid
+      required: [runId, accountId]
+    AgentEvidence:
+      type: object
+      properties:
+        metric:
+          type: string
+        value:
+          type: string
+        source:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        dataStatus:
+          $ref: "#/components/schemas/DataStatus"
+      required: [metric, value, source, timestamp, dataStatus]
+    DataSourceStatus:
+      type: object
+      properties:
+        source:
+          type: string
+        status:
+          $ref: "#/components/schemas/DataStatus"
+        checkedAt:
+          type: string
+          format: date-time
+        observedAt:
+          type: [string, "null"]
+          format: date-time
+        ageMinutes:
+          type: [number, "null"]
+        detail:
+          type: string
+      required: [source, status, checkedAt, observedAt, ageMinutes, detail]
+    AgentResult:
+      type: object
+      properties:
+        agentId:
+          type: string
+        displayName:
+          type: string
+        status:
+          $ref: "#/components/schemas/AgentStatus"
+        stance:
+          $ref: "#/components/schemas/AgentStance"
+        summary:
+          type: string
+        confidence:
+          type: integer
+          minimum: 0
+          maximum: 100
+        bullishFactors:
+          type: array
+          items:
+            type: string
+        bearishFactors:
+          type: array
+          items:
+            type: string
+        risks:
+          type: array
+          items:
+            type: string
+        rationale:
+          type: string
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentEvidence"
+        source:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        dataStatus:
+          $ref: "#/components/schemas/DataStatus"
+        dataSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataSourceStatus"
+        error:
+          type: [string, "null"]
+      required: [agentId, displayName, status, stance, summary, confidence, bullishFactors, bearishFactors, risks, rationale, evidence, source, timestamp, dataStatus, dataSources, error]
+    RunEvent:
+      type: object
+      properties:
+        id:
+          type: integer
+        agent:
+          type: string
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        kind:
+          type: string
+          enum: [info, working, complete, error]
+      required: [id, agent, message, timestamp, kind]
+    ConfidenceBreakdown:
+      type: object
+      properties:
+        coverageScore:
+          type: integer
+        agreementScore:
+          type: integer
+        sourceConsistencyScore:
+          type: integer
+        liveAgentCount:
+          type: integer
+        totalAgentCount:
+          type: integer
+        liveSourceCount:
+          type: integer
+        totalSourceCount:
+          type: integer
+        methodology:
+          type: string
+      required: [coverageScore, agreementScore, sourceConsistencyScore, liveAgentCount, totalAgentCount, liveSourceCount, totalSourceCount, methodology]
+    ScoreFactor:
+      type: object
+      properties:
+        name:
+          type: string
+        value:
+          type: [number, "null"]
+        weight:
+          type: number
+        dataStatus:
+          $ref: "#/components/schemas/DataStatus"
+        explanation:
+          type: string
+      required: [name, value, weight, dataStatus, explanation]
+    FinalReport:
+      type: object
+      properties:
+        decision:
+          type: string
+          enum: [strong_long, long, neutral_wait, short, strong_short, no_clear_signal]
+        summary:
+          type: string
+        confidenceScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+        confidenceLabel:
+          type: string
+        riskScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+        mainReasons:
+          type: array
+          items:
+            type: string
+        counterArguments:
+          type: array
+          items:
+            type: string
+        invalidation:
+          type: string
+        longScore:
+          type: [number, "null"]
+        shortScore:
+          type: [number, "null"]
+        scoreFactors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScoreFactor"
+        confidenceBreakdown:
+          $ref: "#/components/schemas/ConfidenceBreakdown"
+      required: [decision, summary, confidenceScore, confidenceLabel, riskScore, mainReasons, counterArguments, invalidation, longScore, shortScore, scoreFactors, confidenceBreakdown]
+    AnalysisRun:
+      type: object
+      properties:
+        runId:
+          type: string
+          format: uuid
+        accountId:
+          type: string
+          format: uuid
+        asset:
+          $ref: "#/components/schemas/AssetCode"
+        question:
+          type: string
+        status:
+          $ref: "#/components/schemas/AnalysisRunStatus"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: [string, "null"]
+          format: date-time
+        agentResults:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentResult"
+        activity:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunEvent"
+        finalReport:
+          oneOf:
+            - $ref: "#/components/schemas/FinalReport"
+            - type: "null"
+        error:
+          type: [string, "null"]
+      required: [runId, accountId, asset, question, status, createdAt, updatedAt, completedAt, agentResults, activity, finalReport, error]
+    AnalysisHistoryItem:
+      type: object
+      properties:
+        runId:
+          type: string
+          format: uuid
+        asset:
+          $ref: "#/components/schemas/AssetCode"
+        question:
+          type: string
+        status:
+          $ref: "#/components/schemas/AnalysisRunStatus"
+        decision:
+          type: [string, "null"]
+        confidenceScore:
+          type: [integer, "null"]
+        createdAt:
+          type: string
+          format: date-time
+      required: [runId, asset, question, status, decision, confidenceScore, createdAt]
+    AnalysisHistory:
+      type: object
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalysisHistoryItem"
+      required: [runs]
+    MarketAsset:
+      type: object
+      properties:
+        symbol:
+          $ref: "#/components/schemas/AssetCode"
+        name:
+          type: string
+        category:
+          type: string
+          enum: [crypto, crypto_equity, big_tech, semiconductor, eu_equity, commodity]
+        priceEur:
+          type: [number, "null"]
+        change24hPercent:
+          type: [number, "null"]
+        change7dPercent:
+          type: [number, "null"]
+        volume24hEur:
+          type: [number, "null"]
+        marketCapEur:
+          type: [number, "null"]
+        dataStatus:
+          $ref: "#/components/schemas/DataStatus"
+        sourceStatuses:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataSourceStatus"
+        radarScore:
+          type: [number, "null"]
+        sparkline:
+          type: array
+          items:
+            type: number
+      required: [symbol, name, category, priceEur, change24hPercent, change7dPercent, volume24hEur, marketCapEur, dataStatus, sourceStatuses, radarScore, sparkline]
+    RadarResponse:
+      type: object
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketAsset"
+      required: [generatedAt, assets]
+    PaperPosition:
+      type: object
+      properties:
+        positionId:
+          type: string
+          format: uuid
+        runId:
+          type: [string, "null"]
+          format: uuid
+        asset:
+          $ref: "#/components/schemas/AssetCode"
+        side:
+          type: string
+          enum: [long, short]
+        notionalEur:
+          type: number
+        quantity:
+          type: number
+        entryPriceEur:
+          type: number
+        currentPriceEur:
+          type: [number, "null"]
+        currentPriceDataStatus:
+          $ref: "#/components/schemas/DataStatus"
+        priceSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataSourceStatus"
+        stopLossEur:
+          type: [number, "null"]
+        takeProfitEur:
+          type: [number, "null"]
+        openedAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: [string, "null"]
+          format: date-time
+        exitPriceEur:
+          type: [number, "null"]
+        unrealizedPnlEur:
+          type: [number, "null"]
+        realizedPnlEur:
+          type: [number, "null"]
+        status:
+          type: string
+          enum: [open, closed]
+        closeReason:
+          type: [string, "null"]
+      required: [positionId, runId, asset, side, notionalEur, quantity, entryPriceEur, currentPriceEur, currentPriceDataStatus, priceSources, stopLossEur, takeProfitEur, openedAt, closedAt, exitPriceEur, unrealizedPnlEur, realizedPnlEur, status, closeReason]
+    PaperPerformance:
+      type: object
+      properties:
+        tradeCount:
+          type: integer
+        winRate:
+          type: [number, "null"]
+        averageWinEur:
+          type: [number, "null"]
+        averageLossEur:
+          type: [number, "null"]
+        maxDrawdownEur:
+          type: number
+        performanceByAgent:
+          type: array
+          items:
+            type: object
+            properties:
+              agentId:
+                type: string
+              winRate:
+                type: [number, "null"]
+              sampleCount:
+                type: integer
+            required: [agentId, winRate, sampleCount]
+      required: [tradeCount, winRate, averageWinEur, averageLossEur, maxDrawdownEur, performanceByAgent]
+    PaperPortfolio:
+      type: object
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        currency:
+          type: string
+          enum: [EUR]
+        startingBalanceEur:
+          type: number
+        cashBalanceEur:
+          type: number
+        equityEur:
+          type: [number, "null"]
+        realizedPnlEur:
+          type: number
+        unrealizedPnlEur:
+          type: [number, "null"]
+        drawdownPercent:
+          type: number
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaperPosition"
+        closedTrades:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaperPosition"
+        performance:
+          $ref: "#/components/schemas/PaperPerformance"
+      required: [accountId, currency, startingBalanceEur, cashBalanceEur, equityEur, realizedPnlEur, unrealizedPnlEur, drawdownPercent, positions, closedTrades, performance]
+    PaperTradeResult:
+      type: object
+      properties:
+        position:
+          $ref: "#/components/schemas/PaperPosition"
+        portfolio:
+          $ref: "#/components/schemas/PaperPortfolio"
+      required: [position, portfolio]
+    PaperAccountRequest:
+      type: object
+      properties:
+        accountId:
+          type: string
+          format: uuid
+      required: [accountId]
+    OpenPaperTradeRequest:
+      type: object
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        runId:
+          type: string
+          format: uuid
+        side:
+          type: string
+          enum: [long, short]
+        sizeEur:
+          type: number
+          minimum: 1
+          maximum: 1000000
+        stopLossEur:
+          type: [number, "null"]
+          minimum: 0
+        takeProfitEur:
+          type: [number, "null"]
+          minimum: 0
+      required: [accountId, runId, side, sizeEur, stopLossEur, takeProfitEur]
+    ResetPaperRequest:
+      type: object
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        startingBalanceEur:
+          type: number
+          minimum: 100
+          maximum: 1000000
+      required: [accountId, startingBalanceEur]
+    ScoreWeights:
+      type: object
+      properties:
+        trend:
+          type: number
+          minimum: 0
+          maximum: 100
+        ema:
+          type: number
+          minimum: 0
+          maximum: 100
+        rsi:
+          type: number
+          minimum: 0
+          maximum: 100
+        atr:
+          type: number
+          minimum: 0
+          maximum: 100
+        momentum:
+          type: number
+          minimum: 0
+          maximum: 100
+        volume:
+          type: number
+          minimum: 0
+          maximum: 100
+        breakout:
+          type: number
+          minimum: 0
+          maximum: 100
+        news:
+          type: number
+          minimum: 0
+          maximum: 100
+        sentiment:
+          type: number
+          minimum: 0
+          maximum: 100
+        macro:
+          type: number
+          minimum: 0
+          maximum: 100
+        risk:
+          type: number
+          minimum: 0
+          maximum: 100
+        consensus:
+          type: number
+          minimum: 0
+          maximum: 100
+      required: [trend, ema, rsi, atr, momentum, volume, breakout, news, sentiment, macro, risk, consensus]
+    DeskSettings:
+      type: object
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        startingBalanceEur:
+          type: number
+        scoreWeights:
+          $ref: "#/components/schemas/ScoreWeights"
+      required: [accountId, startingBalanceEur, scoreWeights]
+    UpdateDeskSettingsRequest:
+      type: object
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        startingBalanceEur:
+          type: number
+          minimum: 100
+          maximum: 1000000
+        scoreWeights:
+          $ref: "#/components/schemas/ScoreWeights"
+      required: [accountId, startingBalanceEur, scoreWeights]
 

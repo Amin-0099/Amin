@@ -1,4 +1,4 @@
-import { Router, type IRouter, type Response } from "express";
+import { Router, type IRouter, type Response as ExpressResponse } from "express";
 import {
   AnalyzeMarketScannerBody,
   AnalyzeMarketScannerResponse,
@@ -6,9 +6,9 @@ import {
 
 const router: IRouter = Router();
 
-const MODEL = "gemini-3.8-flash";
-const GENERATE_CONTENT_URL =
-  `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+const DEFAULT_MODEL = "gemini-3.8-flash";
+const GENERATE_CONTENT_BASE =
+  "https://generativelanguage.googleapis.com/v1beta/models";
 const REQUEST_TIMEOUT_MS = 30_000;
 const MARKET_SCANNER_INSTRUCTION = [
   "You are AMIN AI DESK's Market Scanner, a market-analysis specialist.",
@@ -31,7 +31,7 @@ type GeminiGenerateContentResponse = {
 };
 
 function sendError(
-  res: Response,
+  res: ExpressResponse,
   status: number,
   code: string,
   error: string,
@@ -67,12 +67,25 @@ router.post("/market-scanner/analyze", async (req, res): Promise<void> => {
     return;
   }
 
+  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
+  if (!/^[a-zA-Z0-9._-]+$/.test(model)) {
+    sendError(
+      res,
+      503,
+      "GEMINI_MODEL_INVALID",
+      "The configured Gemini model name is invalid. Set GEMINI_MODEL to a supported model ID.",
+    );
+    return;
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let upstream: Response;
+  let upstream: globalThis.Response;
 
   try {
-    upstream = await fetch(GENERATE_CONTENT_URL, {
+    upstream = await fetch(
+      `${GENERATE_CONTENT_BASE}/${encodeURIComponent(model)}:generateContent`,
+      {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -94,7 +107,8 @@ router.post("/market-scanner/analyze", async (req, res): Promise<void> => {
         },
       }),
       signal: controller.signal,
-    });
+      },
+    );
   } catch {
     clearTimeout(timeout);
     if (controller.signal.aborted) {
