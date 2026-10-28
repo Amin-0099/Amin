@@ -1,13 +1,26 @@
 import { Router, type IRouter, type Response as ExpressResponse } from "express";
 import { GetRadarResponse } from "@workspace/api-zod";
-import { getRadarAssets } from "../lib/market-data";
+import { DEFAULT_SCORE_WEIGHTS } from "../lib/account-settings";
+import { analyzeMarketSnapshot } from "../lib/analysis-engine";
+import { getMarketSnapshot, getRadarAssets } from "../lib/market-data";
 
 const router: IRouter = Router();
 
 router.get("/radar", async (req, res) => {
   try {
     const assets = await getRadarAssets();
-    const ordered = [...assets].sort((left, right) => {
+    const analyzedAssets = await Promise.all(assets.map(async (asset) => {
+      const snapshot = await getMarketSnapshot(asset.symbol);
+      const analysis = analyzeMarketSnapshot(snapshot, DEFAULT_SCORE_WEIGHTS);
+      return {
+        ...asset,
+        sourceStatuses: snapshot.sourceStatuses,
+        signal: analysis.report.confidenceBreakdown.liveAgentCount > 0
+          ? analysis.report
+          : null,
+      };
+    }));
+    const ordered = [...analyzedAssets].sort((left, right) => {
       if (left.radarScore === null && right.radarScore !== null) return 1;
       if (left.radarScore !== null && right.radarScore === null) return -1;
       return (right.radarScore ?? 0) - (left.radarScore ?? 0);

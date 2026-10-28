@@ -700,11 +700,15 @@ components:
             $ref: "#/components/schemas/DataSourceStatus"
         radarScore:
           type: [number, "null"]
+        signal:
+          oneOf:
+            - $ref: "#/components/schemas/FinalReport"
+            - type: "null"
         sparkline:
           type: array
           items:
             type: number
-      required: [symbol, name, category, priceEur, change24hPercent, change7dPercent, volume24hEur, marketCapEur, dataStatus, sourceStatuses, radarScore, sparkline]
+      required: [symbol, name, category, priceEur, change24hPercent, change7dPercent, volume24hEur, marketCapEur, dataStatus, sourceStatuses, radarScore, signal, sparkline]
     RadarResponse:
       type: object
       properties:

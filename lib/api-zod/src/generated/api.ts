@@ -195,6 +195,14 @@ export const GetAnalysisHistoryResponse = zod.object({
 /**
  * @summary Get source-backed radar data for supported assets
  */
+export const getRadarResponseAssetsItemSignalOneConfidenceScoreMin = 0;
+export const getRadarResponseAssetsItemSignalOneConfidenceScoreMax = 100;
+
+export const getRadarResponseAssetsItemSignalOneRiskScoreMin = 0;
+export const getRadarResponseAssetsItemSignalOneRiskScoreMax = 100;
+
+
+
 export const GetRadarResponse = zod.object({
   "generatedAt": zod.string().datetime({"offset":true}),
   "assets": zod.array(zod.object({
@@ -216,6 +224,35 @@ export const GetRadarResponse = zod.object({
   "detail": zod.string()
 })),
   "radarScore": zod.number().nullable(),
+  "signal": zod.union([zod.object({
+  "decision": zod.enum(['strong_long', 'long', 'neutral_wait', 'short', 'strong_short', 'no_clear_signal']),
+  "summary": zod.string(),
+  "confidenceScore": zod.number().int().min(getRadarResponseAssetsItemSignalOneConfidenceScoreMin).max(getRadarResponseAssetsItemSignalOneConfidenceScoreMax),
+  "confidenceLabel": zod.string(),
+  "riskScore": zod.number().int().min(getRadarResponseAssetsItemSignalOneRiskScoreMin).max(getRadarResponseAssetsItemSignalOneRiskScoreMax).nullable(),
+  "mainReasons": zod.array(zod.string()),
+  "counterArguments": zod.array(zod.string()),
+  "invalidation": zod.string(),
+  "longScore": zod.number().nullable(),
+  "shortScore": zod.number().nullable(),
+  "scoreFactors": zod.array(zod.object({
+  "name": zod.string(),
+  "value": zod.number().nullable(),
+  "weight": zod.number(),
+  "dataStatus": zod.enum(['live', 'stale', 'missing']),
+  "explanation": zod.string()
+})),
+  "confidenceBreakdown": zod.object({
+  "coverageScore": zod.number().int(),
+  "agreementScore": zod.number().int(),
+  "sourceConsistencyScore": zod.number().int(),
+  "liveAgentCount": zod.number().int(),
+  "totalAgentCount": zod.number().int(),
+  "liveSourceCount": zod.number().int(),
+  "totalSourceCount": zod.number().int(),
+  "methodology": zod.string()
+})
+}),zod.null()]),
   "sparkline": zod.array(zod.number())
 }))
 })

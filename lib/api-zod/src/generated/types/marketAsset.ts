@@ -8,6 +8,7 @@
 import type { AssetCode } from './assetCode';
 import type { DataSourceStatus } from './dataSourceStatus';
 import type { DataStatus } from './dataStatus';
+import type { FinalReport } from './finalReport';
 import type { MarketAssetCategory } from './marketAssetCategory';
 
 export interface MarketAsset {
@@ -28,5 +29,6 @@ export interface MarketAsset {
   sourceStatuses: DataSourceStatus[];
   /** @nullable */
   radarScore: number | null;
+  signal: FinalReport | null;
   sparkline: number[];
 }

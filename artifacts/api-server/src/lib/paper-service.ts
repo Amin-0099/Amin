@@ -2,12 +2,14 @@ import { and, asc, eq } from "drizzle-orm";
 import type {
   AssetCode,
   DeskSettings,
+  FinalReport,
   PaperPerformance,
   PaperPortfolio,
   PaperPosition,
   ScoreWeights,
 } from "@workspace/api-zod";
 import {
+  analysisAgentOutputs,
   analysisRuns,
   db,
   paperAccounts,
@@ -40,6 +42,35 @@ export function calculateTradePnl(
   price: number,
 ): number {
   return side === "short" ? quantity * (entry - price) : quantity * (price - entry);
+}
+
+type PaperSignalAgent = {
+  status: string;
+  stance: string;
+  dataStatus: string;
+  evidence: unknown;
+};
+
+export function hasActionablePaperSignal(
+  side: "long" | "short",
+  report: Pick<FinalReport, "decision" | "confidenceBreakdown"> | null,
+  agents: PaperSignalAgent[],
+): boolean {
+  if (!report || report.confidenceBreakdown.liveAgentCount < 1) return false;
+  const allowedDecisions = side === "long"
+    ? ["long", "strong_long"]
+    : ["short", "strong_short"];
+  if (!allowedDecisions.includes(report.decision)) return false;
+
+  const expectedStance = side === "long" ? "bullish" : "bearish";
+  const corroboratingAgents = agents.filter((agent) =>
+    agent.status === "complete" &&
+    agent.stance === expectedStance &&
+    agent.dataStatus === "live" &&
+    Array.isArray(agent.evidence) &&
+    agent.evidence.length > 0,
+  );
+  return corroboratingAgents.length >= 2;
 }
 
 function priceSources(snapshot: MarketSnapshot | undefined) {
@@ -111,10 +142,10 @@ function readDirectionalAgents(signalSnapshot: Record<string, unknown>): Array<{
   });
 }
 
-function calculatePerformance(
+export function calculatePaperPerformance(
   startingBalance: number,
-  closedTrades: PaperPosition[],
-  trades: Array<typeof paperTrades.$inferSelect>,
+  closedTrades: Array<Pick<PaperPosition, "positionId" | "side" | "realizedPnlEur" | "closedAt">>,
+  trades: Array<Pick<typeof paperTrades.$inferSelect, "id" | "signalSnapshot">>,
 ): PaperPerformance {
   const outcomes = closedTrades
     .map((trade) => trade.realizedPnlEur)
@@ -139,10 +170,14 @@ function calculatePerformance(
     const raw = byPosition.get(tradeView.positionId);
     if (!raw) continue;
     const pnl = tradeView.realizedPnlEur ?? 0;
+    const underlyingMove = tradeView.side === "short" ? -pnl : pnl;
     for (const agent of readDirectionalAgents(raw.signalSnapshot)) {
       const stats = agentStats.get(agent.id) ?? { wins: 0, samples: 0 };
       stats.samples += 1;
-      if ((agent.stance === "bullish" && pnl > 0) || (agent.stance === "bearish" && pnl < 0)) {
+      if (
+        (agent.stance === "bullish" && underlyingMove > 0) ||
+        (agent.stance === "bearish" && underlyingMove < 0)
+      ) {
         stats.wins += 1;
       }
       agentStats.set(agent.id, stats);
@@ -208,7 +243,7 @@ export async function getPaperPortfolio(accountId: string): Promise<PaperPortfol
     0,
   );
   const startingBalanceEur = asMoney(account?.startingBalanceEur);
-  const performance = calculatePerformance(startingBalanceEur, closedTrades, trades);
+  const performance = calculatePaperPerformance(startingBalanceEur, closedTrades, trades);
   const currentDrawdown =
     equityEur === null || startingBalanceEur <= 0
       ? null
@@ -329,8 +364,20 @@ export async function openPaperPosition(input: {
   if (!run || run.status !== "complete") {
     throw new PaperServiceError("A completed analysis run is required to open a linked demo position.", 409, "ANALYSIS_RUN_REQUIRED");
   }
+  const report = run.finalReport as FinalReport | null;
+  const agentRows = await db
+    .select()
+    .from(analysisAgentOutputs)
+    .where(eq(analysisAgentOutputs.runId, input.runId));
+  if (!hasActionablePaperSignal(input.side, report, agentRows)) {
+    throw new PaperServiceError(
+      "A matching live-data-backed analysis signal is required to open this demo position.",
+      409,
+      "PAPER_SIGNAL_NOT_ACTIONABLE",
+    );
+  }
   const asset = run.asset as AssetCode;
-  const snapshot = await getMarketSnapshot(asset);
+  const snapshot = await getMarketSnapshot(asset, true);
   const entryPrice = snapshot.priceEur;
   if (entryPrice === null) {
     throw new PaperServiceError("No fresh EUR price is available. The demo position was not opened.", 503, "LIVE_PRICE_REQUIRED");
@@ -354,7 +401,6 @@ export async function openPaperPosition(input: {
   ) {
     throw new PaperServiceError("Take-profit must be positive and above entry for long, below entry for short.", 400, "INVALID_TAKE_PROFIT");
   }
-  const report = run.finalReport as Record<string, unknown> | null;
   const signalSnapshot = {
     runId: run.id,
     asset: run.asset,
@@ -362,7 +408,17 @@ export async function openPaperPosition(input: {
     confidenceScore: run.confidence ?? null,
     riskScore: report?.riskScore ?? null,
     finalReport: report,
-    agentResults: [],
+    agentResults: agentRows.map((agent) => ({
+      agentId: agent.agentId,
+      status: agent.status,
+      stance: agent.stance,
+      dataStatus: agent.dataStatus,
+      confidence: agent.confidence,
+      summary: agent.summary,
+      evidence: agent.evidence,
+      dataSources: agent.dataSources,
+      timestamp: agent.timestamp.toISOString(),
+    })),
   };
 
   const created = await db.transaction(async (tx) => {
@@ -422,7 +478,7 @@ export async function closePaperPosition(
   if (trade.closedAt) {
     throw new PaperServiceError("This demo position is already closed.", 409, "POSITION_ALREADY_CLOSED");
   }
-  const snapshot = await getMarketSnapshot(trade.asset as AssetCode);
+  const snapshot = await getMarketSnapshot(trade.asset as AssetCode, true);
   const exitPrice = snapshot.priceEur;
   if (exitPrice === null) {
     throw new PaperServiceError("No fresh EUR price is available. The demo position remains open.", 503, "LIVE_PRICE_REQUIRED");

@@ -16,7 +16,7 @@ import {
   db,
   type StoredRunEvent,
 } from "@workspace/db";
-import { getDeskSettings } from "./account-settings";
+import { DEFAULT_SCORE_WEIGHTS, getDeskSettings } from "./account-settings";
 import { generateGeminiContent, GeminiServiceError } from "./gemini";
 import { getMarketSnapshot, type Candle, type MarketSnapshot } from "./market-data";
 
@@ -457,7 +457,9 @@ function calculateRisk(snapshot: MarketSnapshot): {
     if (peak > 0) maxDrawdown = Math.max(maxDrawdown, ((peak - close) / peak) * 100);
   }
   const deviation = snapshot.sourceDeviationPercent;
-  const isEvaluable = volatility !== null && closes.length >= 30;
+  const hasEnoughData = volatility !== null && closes.length >= 30;
+  const sourceStatus = snapshot.dailyStatus;
+  const isEvaluable = hasEnoughData && sourceStatus.status === "live";
   const riskScore = isEvaluable
     ? Math.round(
         Math.min(
@@ -471,7 +473,6 @@ function calculateRisk(snapshot: MarketSnapshot): {
         ),
       )
     : null;
-  const sourceStatus = snapshot.dailyStatus;
   return {
     volatility,
     maxDrawdown: isEvaluable ? maxDrawdown : null,
@@ -480,7 +481,9 @@ function calculateRisk(snapshot: MarketSnapshot): {
       stance: isEvaluable ? "neutral" : "not_evaluable",
       summary: isEvaluable
         ? `Annualisierte 30-Tage-Volatilität ${volatility!.toFixed(1)}%, maximaler 90-Tage-Drawdown ${maxDrawdown.toFixed(1)}%; Risk Score ${riskScore}/100.`
-        : "Nicht bewertbar: Für Volatilität und Drawdown liegen nicht genügend Tageskerzen vor.",
+        : hasEnoughData
+          ? "Nicht bewertbar: Die Tageskerzen sind nicht frisch genug für eine aktuelle Risikobewertung."
+          : "Nicht bewertbar: Für Volatilität und Drawdown liegen nicht genügend Tageskerzen vor.",
       confidence: isEvaluable && sourceStatus.status === "live" ? Math.min(90, Math.round(40 + closes.length / 5)) : 0,
       bullishFactors: [],
       bearishFactors: [],
@@ -490,7 +493,7 @@ function calculateRisk(snapshot: MarketSnapshot): {
             `Maximaler 90-Tage-Drawdown: ${maxDrawdown.toFixed(1)}%.`,
             ...(deviation === null ? ["CoinGecko/Binance-Abweichung fehlt."] : [`Quellenabweichung: ${deviation.toFixed(3)}%.`]),
           ]
-        : ["Risiko kann mangels ausreichender Tageskerzen nicht berechnet werden."],
+        : [hasEnoughData ? "Risiko kann wegen veralteter Tageskerzen nicht aktuell berechnet werden." : "Risiko kann mangels ausreichender Tageskerzen nicht berechnet werden."],
       rationale: "Risk Score basiert auf annualisierter Volatilität, maximalem 90-Tage-Drawdown und der Preisabweichung öffentlicher Quellen.",
       evidence: isEvaluable
         ? [
@@ -500,7 +503,7 @@ function calculateRisk(snapshot: MarketSnapshot): {
           ]
         : [],
       source: sourceStatus.source,
-      dataStatus: isEvaluable ? sourceStatus.status : "missing",
+      dataStatus: hasEnoughData ? sourceStatus.status : "missing",
       dataSources: [sourceStatus, ...snapshot.sourceStatuses.slice(0, 3)],
     }),
   };
@@ -993,7 +996,9 @@ function calculateScoreFactors(
 }
 
 function weightedScores(factors: ScoreFactor[]): { longScore: number | null; shortScore: number | null } {
-  const available = factors.filter((factor) => factor.value !== null && factor.weight > 0);
+  const available = factors.filter(
+    (factor) => factor.value !== null && factor.weight > 0 && factor.dataStatus === "live",
+  );
   if (!available.length) return { longScore: null, shortScore: null };
   const totalWeight = available.reduce((sum, factor) => sum + factor.weight, 0);
   const longScore = available.reduce((sum, factor) => sum + factor.value! * factor.weight, 0) / totalWeight;
@@ -1157,6 +1162,57 @@ export function buildFinalReport(
   };
 }
 
+export function analyzeMarketSnapshot(
+  snapshot: MarketSnapshot,
+  weights: ScoreWeights = DEFAULT_SCORE_WEIGHTS,
+) {
+  const market = calculateMarketStructure(snapshot);
+  const technical = calculateTechnical(snapshot);
+  const momentum = calculateMomentum(snapshot);
+  const volume = calculateVolume(snapshot);
+  const unavailableSources: Array<[string, string]> = [
+    ["news-analyst", "News feeds"],
+    ["macro-analyst", "macroeconomic data"],
+    ["sentiment-analyst", "sentiment feeds"],
+    ["social-sentiment", "social platforms"],
+    ["on-chain-analyst", "on-chain data"],
+  ];
+  const unavailable = unavailableSources.map(([agentId, title]) =>
+    unavailableAgent(
+      agentId,
+      title,
+      `Keine ${title}-Datenquelle ist in dieser Version angebunden.`,
+    ),
+  );
+  const risk = calculateRisk(snapshot);
+  const agentResults = [
+    market,
+    technical.output,
+    momentum.output,
+    volume,
+    ...unavailable,
+    risk.output,
+  ];
+  const verification = verifyResults(agentResults, snapshot);
+  const report = buildFinalReport(
+    [...agentResults, verification],
+    snapshot,
+    weights,
+    technical.indicators,
+    momentum,
+    risk.riskScore,
+  );
+
+  return {
+    agentResults,
+    verification,
+    report,
+    indicators: technical.indicators,
+    momentum,
+    riskScore: risk.riskScore,
+  };
+}
+
 function finalAgent(report: FinalReport): AgentResult {
   const stance: AgentResult["stance"] =
     report.decision.includes("long")
@@ -1221,38 +1277,20 @@ export async function executeAnalysisRun(input: {
       .set({ status: "running", updatedAt: new Date() })
       .where(and(eq(analysisRuns.id, input.runId), eq(analysisRuns.accountId, input.accountId)));
     await addRunEvent(input.runId, input.accountId, "Master Agent", "Run gestartet; lade öffentliche Marktdaten.", "working");
-    const snapshot = await getMarketSnapshot(input.asset);
+    const snapshot = await getMarketSnapshot(input.asset, true);
     runWasStopped(signal);
-
-    const market = calculateMarketStructure(snapshot);
-    await executeAgent(input.runId, input.accountId, "market-structure", signal, () => ({ result: market, snapshot }), results);
-
-    const technical = calculateTechnical(snapshot);
-    await executeAgent(input.runId, input.accountId, "technical-analyst", signal, () => ({ result: technical.output, snapshot }), results);
-
-    const momentum = calculateMomentum(snapshot);
-    await executeAgent(input.runId, input.accountId, "momentum-scanner", signal, () => ({ result: momentum.output, snapshot }), results);
-
-    const volume = calculateVolume(snapshot);
-    await executeAgent(input.runId, input.accountId, "volume-analyst", signal, () => ({ result: volume, snapshot }), results);
-
-    for (const [agentId, title] of [
-      ["news-analyst", "News feeds"],
-      ["macro-analyst", "macroeconomic data"],
-      ["sentiment-analyst", "sentiment feeds"],
-      ["social-sentiment", "social platforms"],
-      ["on-chain-analyst", "on-chain data"],
-    ]) {
-      const output = unavailableAgent(
-        agentId,
-        title,
-        `Keine ${title}-Datenquelle ist in dieser Version angebunden.`,
+    const settings = await getDeskSettings(input.accountId);
+    const analysis = analyzeMarketSnapshot(snapshot, settings.scoreWeights);
+    for (const result of analysis.agentResults) {
+      await executeAgent(
+        input.runId,
+        input.accountId,
+        result.agentId,
+        signal,
+        () => ({ result, snapshot }),
+        results,
       );
-      await executeAgent(input.runId, input.accountId, agentId, signal, () => ({ result: output, snapshot }), results);
     }
-
-    const risk = calculateRisk(snapshot);
-    await executeAgent(input.runId, input.accountId, "risk-analyst", signal, () => ({ result: risk.output, snapshot }), results);
 
     await executeAgent(
       input.runId,
@@ -1283,14 +1321,13 @@ export async function executeAnalysisRun(input: {
       results,
     );
 
-    const settings = await getDeskSettings(input.accountId);
     const report = buildFinalReport(
       [...results.values()],
       snapshot,
       settings.scoreWeights,
-      technical.indicators,
-      momentum,
-      risk.riskScore,
+      analysis.indicators,
+      analysis.momentum,
+      analysis.riskScore,
     );
     await executeAgent(
       input.runId,

@@ -71,20 +71,20 @@ export type MarketSnapshot = {
 
 type CoinGeckoMarket = {
   id: string;
-  current_price?: number | null;
-  market_cap?: number | null;
-  total_volume?: number | null;
-  price_change_percentage_24h?: number | null;
-  price_change_percentage_7d_in_currency?: number | null;
-  last_updated?: string | null;
-  sparkline_in_7d?: { price?: number[] };
+  current_price?: unknown;
+  market_cap?: unknown;
+  total_volume?: unknown;
+  price_change_percentage_24h?: unknown;
+  price_change_percentage_7d_in_currency?: unknown;
+  last_updated?: unknown;
+  sparkline_in_7d?: { price?: unknown };
 };
 
 type BinanceTicker = {
   symbol: string;
-  lastPrice: string;
-  priceChangePercent: string;
-  quoteVolume: string;
+  lastPrice: unknown;
+  priceChangePercent: unknown;
+  quoteVolume: unknown;
   closeTime: number;
 };
 
@@ -147,7 +147,18 @@ function statusFor(
       detail: `${detail} The source timestamp was invalid, so freshness could not be confirmed.`,
     };
   }
-  const ageMinutes = Math.max(0, (Date.now() - observedMillis) / 60_000);
+  const checkedMillis = Date.parse(checkedAt);
+  if (observedMillis > checkedMillis) {
+    return {
+      source,
+      status: "stale",
+      checkedAt,
+      observedAt,
+      ageMinutes: 0,
+      detail: `${detail} The source timestamp is in the future, so freshness could not be confirmed.`,
+    };
+  }
+  const ageMinutes = (checkedMillis - observedMillis) / 60_000;
   const status = ageMinutes <= freshnessMinutes ? "live" : "stale";
   return {
     source,
@@ -207,22 +218,73 @@ async function fetchJson<T>(source: string, url: string): Promise<SourceResult<T
 }
 
 function finiteNumber(value: unknown): number | null {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && value.trim() === "") return null;
   const number = typeof value === "number" ? value : Number(value);
   return Number.isFinite(number) ? number : null;
 }
 
-function parseMarkets(data: CoinGeckoMarket[] | null): Map<string, CoinGeckoMarket> {
-  return new Map((Array.isArray(data) ? data : []).map((item) => [item.id, item]));
+function positiveNumber(value: unknown): number | null {
+  const number = finiteNumber(value);
+  return number !== null && number > 0 ? number : null;
 }
 
-function parseBinanceTickers(data: BinanceTicker[] | BinanceTicker | null): Map<string, BinanceTicker> {
+function epochMillis(value: unknown): number | null {
+  const number = finiteNumber(value);
+  return number !== null &&
+    Number.isSafeInteger(number) &&
+    number >= 0 &&
+    number <= 8_640_000_000_000_000
+    ? number
+    : null;
+}
+
+function sourceTimestamp(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function parseMarkets(data: unknown): Map<string, CoinGeckoMarket> {
+  if (!Array.isArray(data)) return new Map();
+  const rows = data.filter(
+    (item): item is CoinGeckoMarket =>
+      item !== null &&
+      typeof item === "object" &&
+      "id" in item &&
+      typeof item.id === "string",
+  );
+  return new Map(rows.map((item) => [item.id, item]));
+}
+
+function parseBinanceTickers(data: unknown): Map<string, BinanceTicker> {
   if (!data) return new Map();
-  const rows = Array.isArray(data) ? data : [data];
+  const candidates = Array.isArray(data) ? data : [data];
+  const rows = candidates.flatMap((item): BinanceTicker[] => {
+    if (item === null || typeof item !== "object" || !("symbol" in item)) return [];
+    if (typeof item.symbol !== "string" || !("closeTime" in item)) return [];
+    const closeTime = epochMillis(item.closeTime);
+    if (closeTime === null) return [];
+    return [{
+      symbol: item.symbol,
+      lastPrice: "lastPrice" in item ? item.lastPrice : null,
+      priceChangePercent: "priceChangePercent" in item ? item.priceChangePercent : null,
+      quoteVolume: "quoteVolume" in item ? item.quoteVolume : null,
+      closeTime,
+    }];
+  });
   return new Map(rows.map((item) => [item.symbol, item]));
 }
 
 export function computeRadarScore(change: number | null, volume: number | null, cap: number | null): number | null {
-  if (change === null || volume === null || cap === null || cap <= 0) return null;
+  if (
+    change === null ||
+    volume === null ||
+    cap === null ||
+    !Number.isFinite(change) ||
+    !Number.isFinite(volume) ||
+    !Number.isFinite(cap) ||
+    volume < 0 ||
+    cap <= 0
+  ) return null;
   const activity = Math.min(25, (volume / cap) * 100);
   return Math.round(Math.max(0, Math.min(100, 50 + Math.min(25, Math.abs(change) * 2) + activity)) * 10) / 10;
 }
@@ -235,6 +297,7 @@ function buildRadarAssets(
   cgEurAvailable: boolean,
   cgUsdAvailable: boolean,
   binanceAvailable: boolean,
+  failureDetails: { cgEur: string; cgUsd: string; binance: string },
 ): MarketAsset[] {
   return assetCatalog.map((asset) => {
     const config = cryptoAssets[asset.symbol];
@@ -259,6 +322,7 @@ function buildRadarAssets(
         dataStatus: "missing",
         sourceStatuses: [status],
         radarScore: null,
+        signal: null,
         sparkline: [],
       };
     }
@@ -267,61 +331,88 @@ function buildRadarAssets(
     const usd = cgUsd.get(config.coinGeckoId);
     const ticker = binance.get(config.binanceSymbol);
     const eurUsdtTicker = binance.get("EURUSDT");
-    const eurUsdt = finiteNumber(eurUsdtTicker?.lastPrice);
-    const eurUpdated = eur?.last_updated ?? null;
-    const usdUpdated = usd?.last_updated ?? null;
+    const eurUsdt = positiveNumber(eurUsdtTicker?.lastPrice);
+    const eurUpdated = sourceTimestamp(eur?.last_updated);
+    const usdUpdated = sourceTimestamp(usd?.last_updated);
+    const cgPriceEur = positiveNumber(eur?.current_price);
+    const cgPriceUsd = positiveNumber(usd?.current_price);
+    const binancePrice = positiveNumber(ticker?.lastPrice);
+    const hasBinanceEurPrice = binancePrice !== null && eurUsdt !== null;
     const sourceStatuses = [
-      eur && cgEurAvailable
+      eur && cgEurAvailable && cgPriceEur !== null
         ? statusFor("CoinGecko · EUR", eurUpdated, QUOTE_FRESHNESS_MINUTES, "EUR quote and volume retrieved.", checkedAt)
-        : missingStatus("CoinGecko · EUR", cgEurAvailable ? "Asset was not returned by CoinGecko." : "CoinGecko request failed or was rate-limited.", checkedAt),
-      usd && cgUsdAvailable
+        : missingStatus("CoinGecko · EUR", cgEurAvailable ? "Asset quote is missing or invalid." : failureDetails.cgEur, checkedAt),
+      usd && cgUsdAvailable && cgPriceUsd !== null
         ? statusFor("CoinGecko · USD", usdUpdated, QUOTE_FRESHNESS_MINUTES, "USD quote retrieved for cross-source comparison.", checkedAt)
-        : missingStatus("CoinGecko · USD", cgUsdAvailable ? "Asset was not returned by CoinGecko." : "CoinGecko request failed or was rate-limited.", checkedAt),
-      ticker && binanceAvailable
+        : missingStatus("CoinGecko · USD", cgUsdAvailable ? "Asset quote is missing or invalid." : failureDetails.cgUsd, checkedAt),
+      ticker && binanceAvailable && binancePrice !== null
         ? statusFor("Binance · USDT ticker", new Date(ticker.closeTime).toISOString(), QUOTE_FRESHNESS_MINUTES, "Public 24-hour ticker retrieved.", checkedAt)
-        : missingStatus("Binance · USDT ticker", binanceAvailable ? "Trading pair was not returned by Binance." : "Binance request failed or was rate-limited.", checkedAt),
-      eurUsdtTicker && binanceAvailable
+        : missingStatus("Binance · USDT ticker", binanceAvailable ? "Trading pair quote is missing or invalid." : failureDetails.binance, checkedAt),
+      eurUsdtTicker && binanceAvailable && eurUsdt !== null
         ? statusFor("Binance · EURUSDT conversion", new Date(eurUsdtTicker.closeTime).toISOString(), QUOTE_FRESHNESS_MINUTES, "EUR/USDT conversion quote retrieved.", checkedAt)
-        : missingStatus("Binance · EURUSDT conversion", "EUR/USDT quote is required to convert USDT market data to EUR.", checkedAt),
+        : missingStatus("Binance · EURUSDT conversion", binanceAvailable ? "A valid EUR/USDT quote is required to convert Binance data to EUR." : failureDetails.binance, checkedAt),
     ];
-    const cgPriceEur = finiteNumber(eur?.current_price);
-    const binancePrice = finiteNumber(ticker?.lastPrice);
     const cgEurStatus = sourceStatuses[0];
+    const cgUsdStatus = sourceStatuses[1];
     const binanceQuoteStatus = sourceStatuses[2];
     const eurConversionStatus = sourceStatuses[3];
     const binancePriceEur =
-      binancePrice !== null && eurUsdt !== null && eurUsdt > 0
+      hasBinanceEurPrice
         ? binancePrice / eurUsdt
         : null;
+    const liveBinancePrice =
+      binanceQuoteStatus.status === "live" &&
+      eurConversionStatus.status === "live"
+        ? binancePriceEur
+        : null;
+    const liveCoinGeckoPrice =
+      cgEurStatus.status === "live" ? cgPriceEur : null;
+    const observedBinancePrice = hasBinanceEurPrice ? binancePriceEur : null;
     const priceEur =
-      cgEurStatus.status === "live"
-        ? cgPriceEur
-        : binanceQuoteStatus.status === "live" && eurConversionStatus.status === "live"
-          ? binancePriceEur
-          : cgPriceEur ?? binancePriceEur;
+      liveBinancePrice ??
+      liveCoinGeckoPrice ??
+      observedBinancePrice ??
+      cgPriceEur;
     const change24hPercent =
-      finiteNumber(ticker?.priceChangePercent) ??
-      finiteNumber(eur?.price_change_percentage_24h);
-    const volume24hEur =
-      finiteNumber(eur?.total_volume) ??
-      (() => {
-        const quoteVolume = finiteNumber(ticker?.quoteVolume);
-        return quoteVolume !== null && eurUsdt !== null && eurUsdt > 0
-          ? quoteVolume / eurUsdt
-          : null;
-      })();
-    const marketCapEur = finiteNumber(eur?.market_cap);
-    const priceUsd = finiteNumber(usd?.current_price);
+      (binanceQuoteStatus.status === "live"
+        ? finiteNumber(ticker?.priceChangePercent)
+        : null) ??
+      (cgEurStatus.status === "live"
+        ? finiteNumber(eur?.price_change_percentage_24h)
+        : null);
+    const binanceVolumeEur =
+      binanceQuoteStatus.status === "live" && eurConversionStatus.status === "live"
+        ? (() => {
+            const quoteVolume = positiveNumber(ticker?.quoteVolume);
+            return quoteVolume !== null && eurUsdt !== null
+              ? quoteVolume / eurUsdt
+              : null;
+          })()
+        : null;
+    const volume24hEur = binanceVolumeEur ??
+      (cgEurStatus.status === "live" ? positiveNumber(eur?.total_volume) : null);
+    const marketCapEur =
+      cgEurStatus.status === "live" ? positiveNumber(eur?.market_cap) : null;
+    const priceUsd = cgUsdStatus.status === "live" ? cgPriceUsd : null;
     const sourceDeviationPercent =
-      priceUsd !== null && binancePrice !== null && priceUsd > 0
+      priceUsd !== null &&
+      binancePrice !== null &&
+      binanceQuoteStatus.status === "live"
         ? (Math.abs(priceUsd - binancePrice) / priceUsd) * 100
         : null;
-    const priceEurLive =
-      cgEurStatus.status === "live"
-        ? cgPriceEur
-        : binanceQuoteStatus.status === "live" && eurConversionStatus.status === "live"
-          ? binancePriceEur
+    const priceEurLive = liveBinancePrice ?? liveCoinGeckoPrice;
+    const stalePriceEur =
+      priceEurLive === null && (binanceQuoteStatus.status === "stale" || eurConversionStatus.status === "stale")
+        ? observedBinancePrice
+        : priceEurLive === null && cgEurStatus.status === "stale"
+          ? cgPriceEur
           : null;
+    const dataStatus =
+      priceEurLive !== null
+        ? "live"
+        : stalePriceEur !== null
+          ? "stale"
+          : "missing";
     quoteDetails.set(asset.symbol, {
       priceUsd,
       priceEurLive,
@@ -330,17 +421,24 @@ function buildRadarAssets(
 
     return {
       ...asset,
-      priceEur,
+      priceEur: priceEurLive ?? stalePriceEur,
       change24hPercent,
-      change7dPercent: finiteNumber(eur?.price_change_percentage_7d_in_currency),
+      change7dPercent:
+        cgEurStatus.status === "live"
+          ? finiteNumber(eur?.price_change_percentage_7d_in_currency)
+          : null,
       volume24hEur,
       marketCapEur,
-      dataStatus: aggregateStatus(sourceStatuses),
+      dataStatus,
       sourceStatuses,
       radarScore: computeRadarScore(change24hPercent, volume24hEur, marketCapEur),
-      sparkline: Array.isArray(eur?.sparkline_in_7d?.price)
-        ? eur.sparkline_in_7d.price.map((value) => finiteNumber(value)).filter((value): value is number => value !== null)
-        : [],
+      signal: null,
+      sparkline:
+        cgEurStatus.status === "live" && Array.isArray(eur?.sparkline_in_7d?.price)
+          ? eur.sparkline_in_7d.price
+              .map((value) => finiteNumber(value))
+              .filter((value): value is number => value !== null)
+          : [],
     };
   });
 }
@@ -360,19 +458,27 @@ export async function getRadarAssets(forceRefresh = false): Promise<MarketAsset[
       symbols: JSON.stringify([...symbols, "EURUSDT"]),
     })}`;
     const [eurResult, usdResult, binanceResult] = await Promise.all([
-      fetchJson<CoinGeckoMarket[]>("CoinGecko · EUR", quoteUrl("eur")),
-      fetchJson<CoinGeckoMarket[]>("CoinGecko · USD", quoteUrl("usd")),
-      fetchJson<BinanceTicker[]>("Binance · USDT ticker", binanceUrl),
+      fetchJson<unknown>("CoinGecko · EUR", quoteUrl("eur")),
+      fetchJson<unknown>("CoinGecko · USD", quoteUrl("usd")),
+      fetchJson<unknown>("Binance · USDT ticker", binanceUrl),
     ]);
     const checkedAt = isoNow();
+    const eurMarkets = parseMarkets(eurResult.data);
+    const usdMarkets = parseMarkets(usdResult.data);
+    const binanceTickers = parseBinanceTickers(binanceResult.data);
     const value = buildRadarAssets(
-      parseMarkets(eurResult.data),
-      parseMarkets(usdResult.data),
-      parseBinanceTickers(binanceResult.data),
+      eurMarkets,
+      usdMarkets,
+      binanceTickers,
       checkedAt,
-      eurResult.data !== null,
-      usdResult.data !== null,
+      Array.isArray(eurResult.data),
+      Array.isArray(usdResult.data),
       binanceResult.data !== null,
+      {
+        cgEur: eurResult.data === null ? eurResult.status.detail : "CoinGecko returned invalid market data.",
+        cgUsd: usdResult.data === null ? usdResult.status.detail : "CoinGecko returned invalid market data.",
+        binance: binanceResult.data === null ? binanceResult.status.detail : "Binance returned invalid ticker data.",
+      },
     );
     radarCache = { value, expiresAt: Date.now() + RADAR_CACHE_MS };
     return value;
@@ -385,30 +491,50 @@ export async function getRadarAssets(forceRefresh = false): Promise<MarketAsset[
   }
 }
 
-function parseCandles(data: unknown): Candle[] {
+export function parseCandles(data: unknown): Candle[] {
   if (!Array.isArray(data)) return [];
   return data
-    .filter((row): row is unknown[] => Array.isArray(row) && row.length >= 8)
-    .map((row) => ({
-      openTime: Number(row[0]),
-      open: Number(row[1]),
-      high: Number(row[2]),
-      low: Number(row[3]),
-      close: Number(row[4]),
-      volume: Number(row[5]),
-      closeTime: Number(row[6]),
-      quoteVolume: Number(row[7]),
-    }))
-    .filter((candle) =>
-      [candle.openTime, candle.closeTime, candle.open, candle.high, candle.low, candle.close, candle.volume, candle.quoteVolume]
-        .every(Number.isFinite),
-    )
-    .filter((candle) => candle.closeTime < Date.now());
+    .flatMap((row): Candle[] => {
+      if (!Array.isArray(row) || row.length < 8) return [];
+      const values = row.slice(0, 8).map(finiteNumber);
+      if (values.some((value) => value === null)) return [];
+      const [rawOpenTime, rawOpen, rawHigh, rawLow, rawClose, rawVolume, rawCloseTime, rawQuoteVolume] =
+        values as number[];
+      const openTime = epochMillis(rawOpenTime);
+      const closeTime = epochMillis(rawCloseTime);
+      if (
+        openTime === null ||
+        closeTime === null ||
+        closeTime <= openTime ||
+        closeTime >= Date.now() ||
+        rawOpen <= 0 ||
+        rawHigh <= 0 ||
+        rawLow <= 0 ||
+        rawClose <= 0 ||
+        rawVolume < 0 ||
+        rawQuoteVolume < 0 ||
+        rawHigh < Math.max(rawOpen, rawClose) ||
+        rawLow > Math.min(rawOpen, rawClose)
+      ) {
+        return [];
+      }
+      return [{
+        openTime,
+        closeTime,
+        open: rawOpen,
+        high: rawHigh,
+        low: rawLow,
+        close: rawClose,
+        volume: rawVolume,
+        quoteVolume: rawQuoteVolume,
+      }];
+    });
 }
 
 async function getCandles(
   asset: AssetCode,
   interval: "1h" | "1d",
+  forceRefresh = false,
 ): Promise<SourceResult<Candle[]>> {
   const config = cryptoAssets[asset];
   const source = `Binance · ${interval} candles`;
@@ -421,7 +547,7 @@ async function getCandles(
 
   const cacheKey = `${asset}:${interval}`;
   const cached = candleCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (!forceRefresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
   const checkedAt = isoNow();
   const url = `${BINANCE_BASE}/klines?symbol=${config.binanceSymbol}&interval=${interval}&limit=300`;
@@ -447,11 +573,14 @@ async function getCandles(
   return value;
 }
 
-export async function getMarketSnapshot(asset: AssetCode): Promise<MarketSnapshot> {
+export async function getMarketSnapshot(
+  asset: AssetCode,
+  forceRefresh = false,
+): Promise<MarketSnapshot> {
   const [assets, hourlyResult, dailyResult] = await Promise.all([
-    getRadarAssets(),
-    getCandles(asset, "1h"),
-    getCandles(asset, "1d"),
+    getRadarAssets(forceRefresh),
+    getCandles(asset, "1h", forceRefresh),
+    getCandles(asset, "1d", forceRefresh),
   ]);
   const radarAsset = assets.find((item) => item.symbol === asset);
   const sourceStatuses = radarAsset?.sourceStatuses ?? [
