@@ -17,6 +17,11 @@ out-tsc
 # dependencies
 node_modules
 
+# environment files
+.env
+.env.*
+!.env.example
+
 # IDEs and editors
 /.idea
 .project
