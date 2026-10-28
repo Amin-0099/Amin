@@ -14,9 +14,11 @@ export interface PaperPortfolio {
   currency: PaperPortfolioCurrency;
   startingBalanceEur: number;
   cashBalanceEur: number;
-  equityEur: number;
+  /** @nullable */
+  equityEur: number | null;
   realizedPnlEur: number;
-  unrealizedPnlEur: number;
+  /** @nullable */
+  unrealizedPnlEur: number | null;
   drawdownPercent: number;
   positions: PaperPosition[];
   closedTrades: PaperPosition[];

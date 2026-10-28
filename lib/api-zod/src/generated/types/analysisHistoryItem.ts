@@ -17,5 +17,5 @@ export interface AnalysisHistoryItem {
   decision: string | null;
   /** @nullable */
   confidenceScore: number | null;
-  createdAt: Date;
+  createdAt: string;
 }

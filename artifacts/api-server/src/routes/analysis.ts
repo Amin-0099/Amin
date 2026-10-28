@@ -65,9 +65,7 @@ router.post("/analysis/run", async (req, res) => {
     await db.insert(analysisAgentOutputs).values(
       agentDefinitions.map((agent) => ({
         runId,
-        accountId,
         agentId: agent.id,
-        displayName: agent.displayName,
         status: "idle" as const,
         stance: "not_evaluable" as const,
         summary: "Wartet auf den serverseitigen Run.",

@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AssetCode } from './assetCode';
+import type { DataSourceStatus } from './dataSourceStatus';
+import type { DataStatus } from './dataStatus';
 import type { PaperPositionSide } from './paperPositionSide';
 import type { PaperPositionStatus } from './paperPositionStatus';
 
@@ -20,16 +22,19 @@ export interface PaperPosition {
   entryPriceEur: number;
   /** @nullable */
   currentPriceEur: number | null;
+  currentPriceDataStatus: DataStatus;
+  priceSources: DataSourceStatus[];
   /** @nullable */
   stopLossEur: number | null;
   /** @nullable */
   takeProfitEur: number | null;
-  openedAt: Date;
+  openedAt: string;
   /** @nullable */
-  closedAt: Date | null;
+  closedAt: string | null;
   /** @nullable */
   exitPriceEur: number | null;
-  unrealizedPnlEur: number;
+  /** @nullable */
+  unrealizedPnlEur: number | null;
   /** @nullable */
   realizedPnlEur: number | null;
   status: PaperPositionStatus;

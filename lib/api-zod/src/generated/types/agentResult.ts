@@ -28,7 +28,7 @@ export interface AgentResult {
   rationale: string;
   evidence: AgentEvidence[];
   source: string;
-  timestamp: Date;
+  timestamp: string;
   dataStatus: DataStatus;
   dataSources: DataSourceStatus[];
   /** @nullable */

@@ -33,7 +33,7 @@ function asMoney(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function tradePnl(
+export function calculateTradePnl(
   side: string,
   quantity: number,
   entry: number,
@@ -69,7 +69,7 @@ function mapTrade(
   const quantity = asMoney(trade.quantity);
   const pnl =
     !isClosed && price !== null
-      ? tradePnl(trade.side, quantity, entry, price)
+      ? calculateTradePnl(trade.side, quantity, entry, price)
       : isClosed
         ? 0
         : null;
@@ -427,7 +427,7 @@ export async function closePaperPosition(
   if (exitPrice === null) {
     throw new PaperServiceError("No fresh EUR price is available. The demo position remains open.", 503, "LIVE_PRICE_REQUIRED");
   }
-  const pnl = tradePnl(
+  const pnl = calculateTradePnl(
     trade.side,
     asMoney(trade.quantity),
     asMoney(trade.entryPriceEur),

@@ -11,6 +11,6 @@ export interface AgentEvidence {
   metric: string;
   value: string;
   source: string;
-  timestamp: Date;
+  timestamp: string;
   dataStatus: DataStatus;
 }

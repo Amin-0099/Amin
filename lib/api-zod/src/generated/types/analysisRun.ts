@@ -17,10 +17,10 @@ export interface AnalysisRun {
   asset: AssetCode;
   question: string;
   status: AnalysisRunStatus;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
   /** @nullable */
-  completedAt: Date | null;
+  completedAt: string | null;
   agentResults: AgentResult[];
   activity: RunEvent[];
   finalReport: FinalReport | null;

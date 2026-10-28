@@ -11,6 +11,6 @@ export interface RunEvent {
   id: number;
   agent: string;
   message: string;
-  timestamp: Date;
+  timestamp: string;
   kind: RunEventKind;
 }

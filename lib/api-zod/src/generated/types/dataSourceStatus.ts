@@ -10,9 +10,9 @@ import type { DataStatus } from './dataStatus';
 export interface DataSourceStatus {
   source: string;
   status: DataStatus;
-  checkedAt: Date;
+  checkedAt: string;
   /** @nullable */
-  observedAt: Date | null;
+  observedAt: string | null;
   /** @nullable */
   ageMinutes: number | null;
   detail: string;

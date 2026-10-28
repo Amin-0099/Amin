@@ -8,6 +8,6 @@
 import type { MarketAsset } from './marketAsset';
 
 export interface RadarResponse {
-  generatedAt: Date;
+  generatedAt: string;
   assets: MarketAsset[];
 }

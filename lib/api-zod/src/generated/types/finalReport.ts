@@ -21,8 +21,9 @@ export interface FinalReport {
   /**
      * @minimum 0
      * @maximum 100
+     * @nullable
      */
-  riskScore: number;
+  riskScore: number | null;
   mainReasons: string[];
   counterArguments: string[];
   invalidation: string;

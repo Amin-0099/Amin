@@ -221,7 +221,7 @@ function parseBinanceTickers(data: BinanceTicker[] | BinanceTicker | null): Map<
   return new Map(rows.map((item) => [item.symbol, item]));
 }
 
-function computeRadarScore(change: number | null, volume: number | null, cap: number | null): number | null {
+export function computeRadarScore(change: number | null, volume: number | null, cap: number | null): number | null {
   if (change === null || volume === null || cap === null || cap <= 0) return null;
   const activity = Math.min(25, (volume / cap) * 100);
   return Math.round(Math.max(0, Math.min(100, 50 + Math.min(25, Math.abs(change) * 2) + activity)) * 10) / 10;

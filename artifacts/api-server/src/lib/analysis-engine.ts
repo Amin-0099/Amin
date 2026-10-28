@@ -892,7 +892,7 @@ function verifyResults(results: AgentResult[], snapshot: MarketSnapshot): AgentR
   });
 }
 
-function scoreFactors(
+function calculateScoreFactors(
   weights: ScoreWeights,
   technical: ReturnType<typeof calculateTechnical>["indicators"],
   momentum: ReturnType<typeof calculateMomentum>,
@@ -1005,7 +1005,7 @@ function weightedScores(factors: ScoreFactor[]): { longScore: number | null; sho
   };
 }
 
-function buildFinalReport(
+export function buildFinalReport(
   results: AgentResult[],
   snapshot: MarketSnapshot,
   weights: ScoreWeights,
@@ -1043,7 +1043,7 @@ function buildFinalReport(
     noDirectionalContradiction &&
     sourcesConcordant &&
     riskScore !== null;
-  const scoreFactors = scoreFactors(
+  const scoreFactors = calculateScoreFactors(
     weights,
     indicators,
     momentum,
@@ -1187,7 +1187,7 @@ async function readRunResults(runId: string): Promise<AgentResult[]> {
     .where(eq(analysisAgentOutputs.runId, runId));
   return rows.map((row) => ({
     agentId: row.agentId,
-    displayName: row.displayName,
+    displayName: agentById.get(row.agentId)?.displayName ?? row.agentId,
     status: row.status as AgentResult["status"],
     stance: row.stance as AgentResult["stance"],
     summary: row.summary,

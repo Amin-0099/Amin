@@ -222,8 +222,9 @@ export interface FinalReport {
   /**
      * @minimum 0
      * @maximum 100
+     * @nullable
      */
-  riskScore: number;
+  riskScore: number | null;
   mainReasons: string[];
   counterArguments: string[];
   invalidation: string;
@@ -333,6 +334,8 @@ export interface PaperPosition {
   entryPriceEur: number;
   /** @nullable */
   currentPriceEur: number | null;
+  currentPriceDataStatus: DataStatus;
+  priceSources: DataSourceStatus[];
   /** @nullable */
   stopLossEur: number | null;
   /** @nullable */
@@ -342,7 +345,8 @@ export interface PaperPosition {
   closedAt: string | null;
   /** @nullable */
   exitPriceEur: number | null;
-  unrealizedPnlEur: number;
+  /** @nullable */
+  unrealizedPnlEur: number | null;
   /** @nullable */
   realizedPnlEur: number | null;
   status: PaperPositionStatus;
@@ -381,9 +385,11 @@ export interface PaperPortfolio {
   currency: PaperPortfolioCurrency;
   startingBalanceEur: number;
   cashBalanceEur: number;
-  equityEur: number;
+  /** @nullable */
+  equityEur: number | null;
   realizedPnlEur: number;
-  unrealizedPnlEur: number;
+  /** @nullable */
+  unrealizedPnlEur: number | null;
   drawdownPercent: number;
   positions: PaperPosition[];
   closedTrades: PaperPosition[];
