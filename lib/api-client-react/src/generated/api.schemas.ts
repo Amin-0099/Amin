@@ -390,6 +390,14 @@ export const RadarPerformanceItemHorizonHours = {
   NUMBER_168: 168,
 } as const;
 
+export type RadarPerformanceItemStatus = typeof RadarPerformanceItemStatus[keyof typeof RadarPerformanceItemStatus];
+
+
+export const RadarPerformanceItemStatus = {
+  insufficient_data: 'insufficient_data',
+  measured: 'measured',
+} as const;
+
 export interface RadarPerformanceItem {
   asset: AssetCode;
   signalType: string;
@@ -397,13 +405,15 @@ export interface RadarPerformanceItem {
   horizonHours: RadarPerformanceItemHorizonHours;
   /** @minimum 0 */
   sampleCount: number;
+  status: RadarPerformanceItemStatus;
   /** @minimum 0 */
   directionalSampleCount: number;
   /** @minimum 0 */
   hits: number;
   /** @nullable */
   hitRatePercent: number | null;
-  averageReturnPercent: number;
+  /** @nullable */
+  averageReturnPercent: number | null;
 }
 
 export type RadarErrorSourceCategory = typeof RadarErrorSourceCategory[keyof typeof RadarErrorSourceCategory];
@@ -448,11 +458,20 @@ export interface PaperPosition {
   positionId: string;
   /** @nullable */
   runId: string | null;
+  /** @nullable */
+  signalId: string | null;
   asset: AssetCode;
   side: PaperPositionSide;
   notionalEur: number;
   quantity: number;
   entryPriceEur: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  feeRateBps: number;
+  entryFeeEur: number;
+  exitFeeEur: number;
   /** @nullable */
   currentPriceEur: number | null;
   currentPriceDataStatus: DataStatus;
@@ -475,6 +494,14 @@ export interface PaperPosition {
   closeReason: string | null;
 }
 
+export type PaperPerformanceStatus = typeof PaperPerformanceStatus[keyof typeof PaperPerformanceStatus];
+
+
+export const PaperPerformanceStatus = {
+  insufficient_data: 'insufficient_data',
+  measured: 'measured',
+} as const;
+
 export type PaperPerformancePerformanceByAgentItem = {
   agentId: string;
   /** @nullable */
@@ -482,16 +509,130 @@ export type PaperPerformancePerformanceByAgentItem = {
   sampleCount: number;
 };
 
-export interface PaperPerformance {
+export type PaperPerformanceBreakdownStatus = typeof PaperPerformanceBreakdownStatus[keyof typeof PaperPerformanceBreakdownStatus];
+
+
+export const PaperPerformanceBreakdownStatus = {
+  insufficient_data: 'insufficient_data',
+  measured: 'measured',
+} as const;
+
+export interface PaperPerformanceBreakdown {
+  status: PaperPerformanceBreakdownStatus;
+  key: string;
   tradeCount: number;
+  winnerCount: number;
+  loserCount: number;
   /** @nullable */
   winRate: number | null;
+  totalPnlEur: number;
+  /** @nullable */
+  averageWinEur: number | null;
+  /** @nullable */
+  averageLossEur: number | null;
+  /** @nullable */
+  profitFactor: number | null;
+}
+
+export interface PaperPerformance {
+  status: PaperPerformanceStatus;
+  /** @minimum 0 */
+  signalCount: number;
+  tradeCount: number;
+  winnerCount: number;
+  loserCount: number;
+  /** @nullable */
+  winRate: number | null;
+  totalPnlEur: number;
+  /** @nullable */
+  profitFactor: number | null;
   /** @nullable */
   averageWinEur: number | null;
   /** @nullable */
   averageLossEur: number | null;
   maxDrawdownEur: number;
+  byAsset: PaperPerformanceBreakdown[];
+  byStance: PaperPerformanceBreakdown[];
+  bySignalType: PaperPerformanceBreakdown[];
+  byTimeWindow: PaperPerformanceBreakdown[];
   performanceByAgent: PaperPerformancePerformanceByAgentItem[];
+}
+
+export type RadarSignalEvaluationHorizonHours = typeof RadarSignalEvaluationHorizonHours[keyof typeof RadarSignalEvaluationHorizonHours];
+
+
+export const RadarSignalEvaluationHorizonHours = {
+  NUMBER_1: 1,
+  NUMBER_24: 24,
+  NUMBER_168: 168,
+} as const;
+
+export type RadarSignalEvaluationResult = typeof RadarSignalEvaluationResult[keyof typeof RadarSignalEvaluationResult];
+
+
+export const RadarSignalEvaluationResult = {
+  open: 'open',
+  successful: 'successful',
+  failed: 'failed',
+  insufficient_data: 'insufficient_data',
+} as const;
+
+export interface RadarSignalEvaluation {
+  horizonHours: RadarSignalEvaluationHorizonHours;
+  /** @nullable */
+  evaluatedAt: string | null;
+  /** @nullable */
+  returnPercent: number | null;
+  result: RadarSignalEvaluationResult;
+  reason: string;
+  /** @nullable */
+  maxFavorableReturnPercent: number | null;
+  /** @nullable */
+  maxAdverseReturnPercent: number | null;
+}
+
+export type RadarSignalSnapshotStance = typeof RadarSignalSnapshotStance[keyof typeof RadarSignalSnapshotStance];
+
+
+export const RadarSignalSnapshotStance = {
+  bullish: 'bullish',
+  bearish: 'bearish',
+  neutral: 'neutral',
+  not_evaluable: 'not_evaluable',
+} as const;
+
+export interface RadarSignalSnapshot {
+  signalId: string;
+  asset: AssetCode;
+  observedAt: string;
+  /** @nullable */
+  referencePriceUsdt: number | null;
+  /** @nullable */
+  entryPriceEur: number | null;
+  stance: RadarSignalSnapshotStance;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  confidenceScore: number;
+  dataStatus: DataStatus;
+  entryIdea: string;
+  invalidation: string;
+  /** @nullable */
+  invalidationPriceUsdt: number | null;
+  /** @nullable */
+  invalidationPriceEur: number | null;
+  decision: string;
+  /** @nullable */
+  momentumRating: number | null;
+  evidence: AgentEvidence[];
+  technicalSignals: ScoreFactor[];
+  dataSources: DataSourceStatus[];
+  evaluations: RadarSignalEvaluation[];
+}
+
+export interface RadarSignalHistoryResponse {
+  signals: RadarSignalSnapshot[];
 }
 
 export type PaperPortfolioCurrency = typeof PaperPortfolioCurrency[keyof typeof PaperPortfolioCurrency];
@@ -536,7 +677,10 @@ export const OpenPaperTradeRequestSide = {
 
 export interface OpenPaperTradeRequest {
   accountId: string;
-  runId: string;
+  /** @nullable */
+  runId?: string | null;
+  /** @nullable */
+  signalId?: string | null;
   side: OpenPaperTradeRequestSide;
   /**
      * @minimum 1
@@ -553,6 +697,11 @@ export interface OpenPaperTradeRequest {
      * @nullable
      */
   takeProfitEur: number | null;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  feeRateBps?: number;
 }
 
 export interface ResetPaperRequest {
@@ -658,6 +807,10 @@ limit?: number;
 };
 
 export type GetPaperPortfolioParams = {
+accountId: string;
+};
+
+export type GetPaperPerformanceParams = {
 accountId: string;
 };
 

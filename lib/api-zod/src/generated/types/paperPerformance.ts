@@ -5,16 +5,30 @@
  * AMIN AI DESK analysis, market radar, and paper-trading API
  * OpenAPI spec version: 0.1.0
  */
+import type { PaperPerformanceBreakdown } from './paperPerformanceBreakdown';
 import type { PaperPerformancePerformanceByAgentItem } from './paperPerformancePerformanceByAgentItem';
+import type { PaperPerformanceStatus } from './paperPerformanceStatus';
 
 export interface PaperPerformance {
+  status: PaperPerformanceStatus;
+  /** @minimum 0 */
+  signalCount: number;
   tradeCount: number;
+  winnerCount: number;
+  loserCount: number;
   /** @nullable */
   winRate: number | null;
+  totalPnlEur: number;
+  /** @nullable */
+  profitFactor: number | null;
   /** @nullable */
   averageWinEur: number | null;
   /** @nullable */
   averageLossEur: number | null;
   maxDrawdownEur: number;
+  byAsset: PaperPerformanceBreakdown[];
+  byStance: PaperPerformanceBreakdown[];
+  bySignalType: PaperPerformanceBreakdown[];
+  byTimeWindow: PaperPerformanceBreakdown[];
   performanceByAgent: PaperPerformancePerformanceByAgentItem[];
 }

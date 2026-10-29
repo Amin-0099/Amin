@@ -5,7 +5,7 @@ import type { Server } from "node:http";
 import { after, before, test } from "node:test";
 import express from "express";
 import type { ScoreWeights } from "@workspace/api-zod";
-import type { MarketSnapshot } from "./lib/market-data";
+import type { Candle, MarketSnapshot } from "./lib/market-data";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:1/test";
 const databaseIntegrationEnabled = process.env.PHASE2_DATABASE_TEST === "1";
@@ -14,9 +14,9 @@ const [
   { default: apiRouter },
   { analyzeMarketSnapshot, buildFinalReport, verifyResults },
   { computeRadarScore, getMarketSnapshot, getRadarAssets, haveContinuousCandles, parseCandles },
-  { calculatePaperPerformance, calculateTradePnl, getPaperPriceDataStatus, hasActionablePaperSignal },
+  { calculatePaperFee, calculatePaperPerformance, calculateTradePnl, getPaperPriceDataStatus, hasActionablePaperSignal, resolvePaperCloseReason },
   { calculateMomentumIndicators, calculateTechnicalIndicators, relativeStrengthIndex },
-  { calculateRadarErrorSources, calculateRadarPerformance },
+  { calculateRadarErrorSources, calculateRadarPerformance, copySignalSnapshot, evaluateSignalOutcomes },
 ] = await Promise.all([
     import("./routes"),
     import("./lib/analysis-engine"),
@@ -112,6 +112,8 @@ test("analysis and history routes reject invalid inputs before database access",
 test("paper and settings routes reject invalid account data before database access", async () => {
   const portfolio = await fetch(`${baseUrl}/api/paper/portfolio?accountId=invalid`);
   assert.equal(portfolio.status, 400);
+  const performance = await fetch(`${baseUrl}/api/paper/performance?accountId=invalid`);
+  assert.equal(performance.status, 400);
 
   const settings = await fetch(`${baseUrl}/api/settings?accountId=invalid`);
   assert.equal(settings.status, 400);
@@ -122,6 +124,23 @@ test("paper and settings routes reject invalid account data before database acce
     body: JSON.stringify({}),
   });
   assert.equal(openTrade.status, 400);
+
+  const duplicateReference = await fetch(`${baseUrl}/api/paper/trades`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      accountId: randomUUID(),
+      runId: randomUUID(),
+      signalId: randomUUID(),
+      side: "long",
+      sizeEur: 100,
+      stopLossEur: null,
+      takeProfitEur: null,
+      feeRateBps: 10,
+    }),
+  });
+  assert.equal(duplicateReference.status, 400);
+  assert.equal((await duplicateReference.json() as { code: string }).code, "INVALID_SIGNAL_REFERENCE");
 });
 
 test("radar score requires complete data and returns a deterministic score", () => {
@@ -402,10 +421,11 @@ test("radar evaluation reports measured performance by asset, signal, and horizo
       stance: "bullish",
       horizonHours: 24,
       sampleCount: 2,
+      status: "insufficient_data",
       directionalSampleCount: 2,
       hits: 1,
-      hitRatePercent: 50,
-      averageReturnPercent: 0.5,
+      hitRatePercent: null,
+      averageReturnPercent: null,
     },
     {
       asset: "ETH",
@@ -413,10 +433,11 @@ test("radar evaluation reports measured performance by asset, signal, and horizo
       stance: "neutral",
       horizonHours: 24,
       sampleCount: 1,
+      status: "insufficient_data",
       directionalSampleCount: 0,
       hits: 0,
       hitRatePercent: null,
-      averageReturnPercent: 0.5,
+      averageReturnPercent: null,
     },
   ]);
 });
@@ -447,6 +468,69 @@ test("radar evaluation classifies stored data and signal errors", () => {
     { category: "stale_data", signalCount: 2 },
     { category: "verification_mismatch", signalCount: 1 },
   ]);
+});
+
+test("signal snapshots are copied so later analysis changes cannot rewrite saved context", () => {
+  const analysis = {
+    evidence: [{ metric: "RSI 14", value: "62.1" }],
+    dataSources: [{ source: "Binance", status: "live" }],
+    entryIdea: "Paper-only reference entry.",
+  };
+  const persisted = copySignalSnapshot(analysis);
+  analysis.evidence[0].value = "0";
+  analysis.dataSources[0].status = "missing";
+  assert.equal(persisted.evidence[0].value, "62.1");
+  assert.equal(persisted.dataSources[0].status, "live");
+});
+
+test("signal evaluation uses forward real candles and invalidation before horizon return", () => {
+  const start = Date.UTC(2026, 9, 29, 10);
+  const makeCandle = (closeTime: number, high: number, low: number, close: number): Candle => ({
+    openTime: closeTime - 60 * 60 * 1_000 + 1,
+    closeTime,
+    open: 100,
+    high,
+    low,
+    close,
+    volume: 1,
+    quoteVolume: 100,
+  });
+  const signal = {
+    observedAt: new Date(start),
+    referencePriceUsdt: 100,
+    stance: "bullish",
+    invalidationPriceUsdt: 95,
+  };
+  const success = evaluateSignalOutcomes(
+    signal,
+    [makeCandle(start + 60 * 60 * 1_000, 110, 99, 105)],
+    1,
+    true,
+  );
+  assert.equal(success.evaluationStatus, "successful");
+  assert.equal(success.returnPercent, 5);
+  assert.equal(success.maxFavorableReturnPercent, 10);
+  const invalidated = evaluateSignalOutcomes(
+    signal,
+    [makeCandle(start + 60 * 60 * 1_000, 120, 94, 115)],
+    1,
+    true,
+  );
+  assert.equal(invalidated.evaluationStatus, "failed");
+  assert.match(invalidated.evaluationReason, /invalidation threshold/);
+  assert.equal(evaluateSignalOutcomes(
+    signal,
+    [makeCandle(start + 60 * 60 * 1_000, 101, 94, 97)],
+    24,
+    true,
+  ).evaluationStatus, "failed");
+  assert.equal(evaluateSignalOutcomes(
+    signal,
+    [makeCandle(start + 30 * 60 * 1_000, 102, 99, 101)],
+    1,
+    true,
+  ).evaluationStatus, "open");
+  assert.equal(evaluateSignalOutcomes(signal, [], 1, false).evaluationStatus, "insufficient_data");
 });
 
 test("market data stays missing when providers return no records", async () => {
@@ -665,6 +749,17 @@ test("paper-trading P&L is simulated and symmetric for long and short positions"
   assert.equal(calculateTradePnl("short", 2, 100, 90), 20);
 });
 
+test("paper trading computes configurable fees and validates stops and fee inputs", () => {
+  assert.equal(calculatePaperFee(250, 10), 0.25);
+  assert.equal(calculatePaperFee(250, 0), 0);
+  assert.throws(() => calculatePaperFee(250, 101), RangeError);
+  assert.equal(resolvePaperCloseReason("long", 89, 90, 120), "stop_loss");
+  assert.equal(resolvePaperCloseReason("long", 121, 90, 120), "take_profit");
+  assert.equal(resolvePaperCloseReason("short", 121, 120, 80), "stop_loss");
+  assert.equal(resolvePaperCloseReason("short", 79, 120, 80), "take_profit");
+  assert.equal(resolvePaperCloseReason("long", 100, 90, 120), null);
+});
+
 test("paper price status never labels stale quotes as live", () => {
   const liveSource = {
     source: "CoinGecko · EUR",
@@ -741,12 +836,17 @@ test("paper history computes realized performance only from stored closed trades
   );
 
   assert.equal(performance.tradeCount, 2);
-  assert.equal(performance.winRate, 50);
-  assert.equal(performance.averageWinEur, 100);
-  assert.equal(performance.averageLossEur, -50);
+  assert.equal(performance.winRate, null);
+  assert.equal(performance.averageWinEur, null);
+  assert.equal(performance.averageLossEur, null);
   assert.equal(performance.maxDrawdownEur, 50);
+  assert.equal(performance.status, "insufficient_data");
+  assert.equal(performance.winnerCount, 1);
+  assert.equal(performance.loserCount, 1);
+  assert.equal(performance.totalPnlEur, 50);
+  assert.equal(performance.profitFactor, null);
   assert.deepEqual(performance.performanceByAgent, [
-    { agentId: "technical-analyst", winRate: 50, sampleCount: 2 },
+    { agentId: "technical-analyst", winRate: null, sampleCount: 2 },
   ]);
 
   const shortPerformance = calculatePaperPerformance(
@@ -755,11 +855,48 @@ test("paper history computes realized performance only from stored closed trades
     [{ id: "short-win", signalSnapshot: { agentResults: [{ agentId: "technical-analyst", stance: "bearish", dataStatus: "live" }] } }],
   );
   assert.deepEqual(shortPerformance.performanceByAgent, [
-    { agentId: "technical-analyst", winRate: 100, sampleCount: 1 },
+    { agentId: "technical-analyst", winRate: null, sampleCount: 1 },
   ]);
+  assert.equal(calculatePaperPerformance(1_000, [], []).status, "insufficient_data");
 });
 
-test("database-backed run flows through radar, simulated trade, P&L and history", {
+test("paper performance publishes rates and groupings only after five closed outcomes", () => {
+  const outcomes = [100, -50, 20, -10, 5];
+  const performance = calculatePaperPerformance(
+    1_000,
+    outcomes.map((realizedPnlEur, index) => ({
+      positionId: `trade-${index}`,
+      asset: "BTC" as const,
+      side: "long",
+      realizedPnlEur,
+      closedAt: `2026-10-${String(20 + index).padStart(2, "0")}T10:00:00.000Z`,
+    })),
+    outcomes.map((_, index) => ({
+      id: `trade-${index}`,
+      asset: "BTC",
+      signalId: `signal-${index}`,
+      signalSnapshot: {
+        stance: "bullish",
+        decision: "long",
+        agentResults: [],
+      },
+    })),
+    12,
+  );
+  assert.equal(performance.status, "measured");
+  assert.equal(performance.signalCount, 12);
+  assert.equal(performance.winRate, 60);
+  assert.equal(performance.totalPnlEur, 65);
+  assert.equal(performance.profitFactor, 125 / 60);
+  assert.deepEqual(performance.byAsset.map(({ key, tradeCount, status }) => ({ key, tradeCount, status })), [
+    { key: "BTC", tradeCount: 5, status: "measured" },
+  ]);
+  assert.equal(performance.byStance[0].key, "bullish");
+  assert.equal(performance.bySignalType[0].key, "long");
+  assert.equal(performance.byTimeWindow.length, 1);
+});
+
+test("database-backed run flows through radar, linked paper positions, fees and history", {
   skip: !databaseIntegrationEnabled,
 }, async () => {
   const originalFetch = globalThis.fetch;
@@ -815,7 +952,7 @@ test("database-backed run flows through radar, simulated trade, P&L and history"
       body: JSON.stringify({
         accountId,
         asset: "SOL",
-        question: "Test a source-backed simulated signal.",
+        question: "Test a source-backed paper signal.",
       }),
     });
     assert.equal(startResponse.status, 202);
@@ -850,6 +987,93 @@ test("database-backed run flows through radar, simulated trade, P&L and history"
     assert.ok(solRadar?.signal);
     assert.ok(["long", "strong_long"].includes(solRadar.signal.decision));
 
+    const { db, radarSignals } = await import("@workspace/db");
+    const [recordedSignal] = await db.insert(radarSignals).values({
+      signalKey: `phase5-test:${randomUUID()}`,
+      asset: "SOL",
+      signalType: "long",
+      stance: "bullish",
+      confidenceScore: 75,
+      observedAt: new Date(Date.now() - 1_000),
+      referencePriceUsdt: "108",
+      entryPriceEur: "100",
+      invalidationPriceUsdt: "90",
+      invalidationPriceEur: "83.3333333333",
+      dataStatus: "live",
+      snapshot: {
+        stance: "bullish",
+        decision: "long",
+        confidenceBreakdown: { verificationScore: 90 },
+        evidence: [{
+          metric: "EMA 20",
+          value: "105.00",
+          source: "Binance · 1d candles",
+          timestamp: new Date().toISOString(),
+          dataStatus: "live",
+        }],
+        technicalSignals: [],
+        dataSources: [],
+      },
+    }).returning();
+    assert.ok(recordedSignal);
+    const signalOpenResponse = await fetch(`${baseUrl}/api/paper/trades`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        accountId,
+        signalId: recordedSignal.id,
+        side: "long",
+        sizeEur: 50,
+        stopLossEur: 83.3333333333,
+        takeProfitEur: null,
+        feeRateBps: 10,
+      }),
+    });
+    assert.equal(signalOpenResponse.status, 201);
+    const signalOpened = await signalOpenResponse.json() as {
+      position: { positionId: string; signalId: string; entryFeeEur: number; feeRateBps: number };
+    };
+    assert.equal(signalOpened.position.signalId, recordedSignal.id);
+    assert.equal(signalOpened.position.entryFeeEur, 0.05);
+    assert.equal(signalOpened.position.feeRateBps, 10);
+    const duplicateSignalTrade = await fetch(`${baseUrl}/api/paper/trades`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        accountId,
+        signalId: recordedSignal.id,
+        side: "long",
+        sizeEur: 50,
+        stopLossEur: null,
+        takeProfitEur: null,
+        feeRateBps: 10,
+      }),
+    });
+    assert.equal(duplicateSignalTrade.status, 409);
+    const signalHistoryResponse = await fetch(`${baseUrl}/api/radar/signals`);
+    assert.equal(signalHistoryResponse.status, 200);
+    const signalHistory = await signalHistoryResponse.json() as {
+      signals: Array<{ signalId: string; evidence: Array<{ metric: string }> }>;
+    };
+    assert.ok(signalHistory.signals.some((signal) =>
+      signal.signalId === recordedSignal.id && signal.evidence.some((item) => item.metric === "EMA 20"),
+    ));
+    const signalCloseResponse = await fetch(
+      `${baseUrl}/api/paper/trades/${signalOpened.position.positionId}/close`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accountId }),
+      },
+    );
+    assert.equal(signalCloseResponse.status, 200);
+    const signalClosed = await signalCloseResponse.json() as {
+      position: { signalId: string; realizedPnlEur: number | null; exitFeeEur: number };
+    };
+    assert.equal(signalClosed.position.signalId, recordedSignal.id);
+    assert.equal(signalClosed.position.realizedPnlEur, -0.1);
+    assert.equal(signalClosed.position.exitFeeEur, 0.05);
+
     const openResponse = await fetch(`${baseUrl}/api/paper/trades`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -860,14 +1084,16 @@ test("database-backed run flows through radar, simulated trade, P&L and history"
         sizeEur: 100,
         stopLossEur: null,
         takeProfitEur: null,
+        feeRateBps: 10,
       }),
     });
     assert.equal(openResponse.status, 201);
     const opened = await openResponse.json() as {
-      position: { positionId: string };
+      position: { positionId: string; entryFeeEur: number };
       portfolio: { positions: unknown[] };
     };
     assert.equal(opened.portfolio.positions.length, 1);
+    assert.equal(opened.position.entryFeeEur, 0.1);
 
     solUsdtPrice = 109.08;
     await getRadarAssets(true);
@@ -885,7 +1111,19 @@ test("database-backed run flows through radar, simulated trade, P&L and history"
       portfolio: { closedTrades: Array<{ realizedPnlEur: number | null }> };
     };
     assert.ok((closed.position.realizedPnlEur ?? 0) > 0);
-    assert.equal(closed.portfolio.closedTrades.length, 1);
+    assert.equal(closed.portfolio.closedTrades.length, 2);
+    const paperPerformanceResponse = await fetch(
+      `${baseUrl}/api/paper/performance?accountId=${accountId}`,
+    );
+    assert.equal(paperPerformanceResponse.status, 200);
+    const paperPerformance = await paperPerformanceResponse.json() as {
+      status: string;
+      tradeCount: number;
+      winRate: number | null;
+    };
+    assert.equal(paperPerformance.status, "insufficient_data");
+    assert.equal(paperPerformance.tradeCount, 2);
+    assert.equal(paperPerformance.winRate, null);
 
     const noSignalStart = await fetch(`${baseUrl}/api/analysis/run`, {
       method: "POST",
@@ -943,10 +1181,10 @@ test("database-backed run flows through radar, simulated trade, P&L and history"
       };
     };
     assert.equal(portfolio.positions.length, 0);
-    assert.equal(portfolio.closedTrades.length, 1);
-    assert.equal(portfolio.performance.tradeCount, 1);
+    assert.equal(portfolio.closedTrades.length, 2);
+    assert.equal(portfolio.performance.tradeCount, 2);
     assert.ok(portfolio.performance.performanceByAgent.length > 0);
-    assert.ok(portfolio.performance.performanceByAgent.some((agent) => agent.winRate === 100));
+    assert.ok(portfolio.performance.performanceByAgent.some((agent) => agent.winRate === null));
   } finally {
     globalThis.fetch = originalFetch;
   }

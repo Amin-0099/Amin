@@ -1,10 +1,15 @@
 import { Router, type IRouter, type Response as ExpressResponse } from "express";
-import { GetRadarPerformanceResponse, GetRadarResponse } from "@workspace/api-zod";
+import {
+  GetRadarPerformanceResponse,
+  GetRadarResponse,
+  GetRadarSignalsResponse,
+} from "@workspace/api-zod";
 import { DEFAULT_SCORE_WEIGHTS } from "../lib/account-settings";
 import { analyzeMarketSnapshot } from "../lib/analysis-engine";
 import { getMarketSnapshot, getRadarAssets } from "../lib/market-data";
 import {
   getRadarPerformance,
+  getRadarSignalHistory,
   recordAndEvaluateRadarSignals,
 } from "../lib/radar-evaluation";
 
@@ -77,6 +82,22 @@ router.get("/radar/performance", async (req, res) => {
     res.status(503).json({
       code: "RADAR_PERFORMANCE_UNAVAILABLE",
       error: "Radar signal performance is not available.",
+    });
+  }
+});
+
+router.get("/radar/signals", async (req, res) => {
+  try {
+    const signals = await getRadarSignalHistory();
+    res.json(GetRadarSignalsResponse.parse({ signals }));
+  } catch (error) {
+    req.log.error(
+      { errorName: error instanceof Error ? error.name : "unknown" },
+      "Unable to read immutable radar signal snapshots",
+    );
+    res.status(503).json({
+      code: "RADAR_SIGNAL_HISTORY_UNAVAILABLE",
+      error: "Radar signal history is not available.",
     });
   }
 });

@@ -216,6 +216,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /radar/signals:
+    get:
+      operationId: getRadarSignals
+      tags: [market]
+      summary: Get immutable signal snapshots and real market-data evaluations
+      responses:
+        "200":
+          description: Recent signal snapshots and evaluation state by horizon
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadarSignalHistoryResponse"
+        "503":
+          description: Signal history is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /paper/portfolio:
     get:
       operationId: getPaperPortfolio
@@ -235,11 +253,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PaperPortfolio"
+  /paper/performance:
+    get:
+      operationId: getPaperPerformance
+      tags: [paper]
+      summary: Get measured paper-trade performance for an account
+      parameters:
+        - name: accountId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Performance computed from closed demo positions only
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperPerformance"
   /paper/trades:
     post:
       operationId: openPaperTrade
       tags: [paper]
-      summary: Open a demo position linked to an analysis run
+      summary: Open a demo position linked to an analysis run or recorded radar signal
       requestBody:
         required: true
         content:
@@ -265,7 +302,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-        "422":
+        "503":
           description: Current market price is unavailable
           content:
             application/json:
@@ -814,6 +851,9 @@ components:
         sampleCount:
           type: integer
           minimum: 0
+        status:
+          type: string
+          enum: [insufficient_data, measured]
         directionalSampleCount:
           type: integer
           minimum: 0
@@ -823,8 +863,8 @@ components:
         hitRatePercent:
           type: [number, "null"]
         averageReturnPercent:
-          type: number
-      required: [asset, signalType, stance, horizonHours, sampleCount, directionalSampleCount, hits, hitRatePercent, averageReturnPercent]
+          type: [number, "null"]
+      required: [asset, signalType, stance, horizonHours, sampleCount, status, directionalSampleCount, hits, hitRatePercent, averageReturnPercent]
     RadarPerformanceResponse:
       type: object
       properties:
@@ -856,6 +896,9 @@ components:
         runId:
           type: [string, "null"]
           format: uuid
+        signalId:
+          type: [string, "null"]
+          format: uuid
         asset:
           $ref: "#/components/schemas/AssetCode"
         side:
@@ -866,6 +909,14 @@ components:
         quantity:
           type: number
         entryPriceEur:
+          type: number
+        feeRateBps:
+          type: integer
+          minimum: 0
+          maximum: 100
+        entryFeeEur:
+          type: number
+        exitFeeEur:
           type: number
         currentPriceEur:
           type: [number, "null"]
@@ -896,13 +947,27 @@ components:
           enum: [open, closed]
         closeReason:
           type: [string, "null"]
-      required: [positionId, runId, asset, side, notionalEur, quantity, entryPriceEur, currentPriceEur, currentPriceDataStatus, priceSources, stopLossEur, takeProfitEur, openedAt, closedAt, exitPriceEur, unrealizedPnlEur, realizedPnlEur, status, closeReason]
+      required: [positionId, runId, signalId, asset, side, notionalEur, quantity, entryPriceEur, feeRateBps, entryFeeEur, exitFeeEur, currentPriceEur, currentPriceDataStatus, priceSources, stopLossEur, takeProfitEur, openedAt, closedAt, exitPriceEur, unrealizedPnlEur, realizedPnlEur, status, closeReason]
     PaperPerformance:
       type: object
       properties:
+        status:
+          type: string
+          enum: [insufficient_data, measured]
+        signalCount:
+          type: integer
+          minimum: 0
         tradeCount:
           type: integer
+        winnerCount:
+          type: integer
+        loserCount:
+          type: integer
         winRate:
+          type: [number, "null"]
+        totalPnlEur:
+          type: number
+        profitFactor:
           type: [number, "null"]
         averageWinEur:
           type: [number, "null"]
@@ -910,6 +975,22 @@ components:
           type: [number, "null"]
         maxDrawdownEur:
           type: number
+        byAsset:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaperPerformanceBreakdown"
+        byStance:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaperPerformanceBreakdown"
+        bySignalType:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaperPerformanceBreakdown"
+        byTimeWindow:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaperPerformanceBreakdown"
         performanceByAgent:
           type: array
           items:
@@ -922,7 +1003,114 @@ components:
               sampleCount:
                 type: integer
             required: [agentId, winRate, sampleCount]
-      required: [tradeCount, winRate, averageWinEur, averageLossEur, maxDrawdownEur, performanceByAgent]
+      required: [status, signalCount, tradeCount, winnerCount, loserCount, winRate, totalPnlEur, profitFactor, averageWinEur, averageLossEur, maxDrawdownEur, byAsset, byStance, bySignalType, byTimeWindow, performanceByAgent]
+    PaperPerformanceBreakdown:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [insufficient_data, measured]
+        key:
+          type: string
+        tradeCount:
+          type: integer
+        winnerCount:
+          type: integer
+        loserCount:
+          type: integer
+        winRate:
+          type: [number, "null"]
+        totalPnlEur:
+          type: number
+        averageWinEur:
+          type: [number, "null"]
+        averageLossEur:
+          type: [number, "null"]
+        profitFactor:
+          type: [number, "null"]
+      required: [status, key, tradeCount, winnerCount, loserCount, winRate, totalPnlEur, averageWinEur, averageLossEur, profitFactor]
+    RadarSignalEvaluation:
+      type: object
+      properties:
+        horizonHours:
+          type: integer
+          enum: [1, 24, 168]
+        evaluatedAt:
+          type: [string, "null"]
+          format: date-time
+        returnPercent:
+          type: [number, "null"]
+        result:
+          type: string
+          enum: [open, successful, failed, insufficient_data]
+        reason:
+          type: string
+        maxFavorableReturnPercent:
+          type: [number, "null"]
+        maxAdverseReturnPercent:
+          type: [number, "null"]
+      required: [horizonHours, evaluatedAt, returnPercent, result, reason, maxFavorableReturnPercent, maxAdverseReturnPercent]
+    RadarSignalSnapshot:
+      type: object
+      properties:
+        signalId:
+          type: string
+          format: uuid
+        asset:
+          $ref: "#/components/schemas/AssetCode"
+        observedAt:
+          type: string
+          format: date-time
+        referencePriceUsdt:
+          type: [number, "null"]
+        entryPriceEur:
+          type: [number, "null"]
+        stance:
+          type: string
+          enum: [bullish, bearish, neutral, not_evaluable]
+        confidenceScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+        dataStatus:
+          $ref: "#/components/schemas/DataStatus"
+        entryIdea:
+          type: string
+        invalidation:
+          type: string
+        invalidationPriceUsdt:
+          type: [number, "null"]
+        invalidationPriceEur:
+          type: [number, "null"]
+        decision:
+          type: string
+        momentumRating:
+          type: [number, "null"]
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentEvidence"
+        technicalSignals:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScoreFactor"
+        dataSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataSourceStatus"
+        evaluations:
+          type: array
+          items:
+            $ref: "#/components/schemas/RadarSignalEvaluation"
+      required: [signalId, asset, observedAt, referencePriceUsdt, entryPriceEur, stance, confidenceScore, dataStatus, entryIdea, invalidation, invalidationPriceUsdt, invalidationPriceEur, decision, momentumRating, evidence, technicalSignals, dataSources, evaluations]
+    RadarSignalHistoryResponse:
+      type: object
+      properties:
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/RadarSignalSnapshot"
+      required: [signals]
     PaperPortfolio:
       type: object
       properties:
@@ -977,7 +1165,10 @@ components:
           type: string
           format: uuid
         runId:
-          type: string
+          type: [string, "null"]
+          format: uuid
+        signalId:
+          type: [string, "null"]
           format: uuid
         side:
           type: string
@@ -992,7 +1183,12 @@ components:
         takeProfitEur:
           type: [number, "null"]
           minimum: 0
-      required: [accountId, runId, side, sizeEur, stopLossEur, takeProfitEur]
+        feeRateBps:
+          type: integer
+          minimum: 0
+          maximum: 100
+          default: 10
+      required: [accountId, side, sizeEur, stopLossEur, takeProfitEur]
     ResetPaperRequest:
       type: object
       properties:

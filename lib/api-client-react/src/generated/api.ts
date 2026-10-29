@@ -34,6 +34,7 @@ import type {
   GetAnalysisHistoryParams,
   GetAnalysisRunParams,
   GetDeskSettingsParams,
+  GetPaperPerformanceParams,
   GetPaperPortfolioParams,
   HealthStatus,
   MarketScannerError,
@@ -41,10 +42,12 @@ import type {
   MarketScannerResponse,
   OpenPaperTradeRequest,
   PaperAccountRequest,
+  PaperPerformance,
   PaperPortfolio,
   PaperTradeResult,
   RadarPerformanceResponse,
   RadarResponse,
+  RadarSignalHistoryResponse,
   ResetPaperRequest,
   StopAnalysisRunRequest,
   UpdateDeskSettingsRequest
@@ -862,6 +865,107 @@ export function useGetRadarPerformance<TData = Awaited<ReturnType<typeof getRada
 
 
 
+export const getGetRadarSignalsUrl = () => {
+
+
+
+
+  return `/api/radar/signals`
+}
+
+/**
+ * @summary Get immutable signal snapshots and real market-data evaluations
+ */
+export const getRadarSignals = async ( options?: Parameters<typeof customFetch>[1]): Promise<RadarSignalHistoryResponse> => {
+
+  return customFetch<RadarSignalHistoryResponse>(getGetRadarSignalsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetRadarSignalsQueryKey = () => {
+    return [
+    `/api/radar/signals`
+    ] as const;
+    }
+
+
+export const getGetRadarSignalsQueryOptions = <TData = Awaited<ReturnType<typeof getRadarSignals>>, TError = ErrorType<ApiError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRadarSignals>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRadarSignalsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRadarSignals>>> = ({ signal }) => getRadarSignals({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRadarSignals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRadarSignalsQueryResult = NonNullable<Awaited<ReturnType<typeof getRadarSignals>>>
+export type GetRadarSignalsQueryError = ErrorType<ApiError>
+
+
+export function useGetRadarSignals<TData = Awaited<ReturnType<typeof getRadarSignals>>, TError = ErrorType<ApiError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRadarSignals>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRadarSignals>>,
+          TError,
+          Awaited<ReturnType<typeof getRadarSignals>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRadarSignals<TData = Awaited<ReturnType<typeof getRadarSignals>>, TError = ErrorType<ApiError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRadarSignals>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRadarSignals>>,
+          TError,
+          Awaited<ReturnType<typeof getRadarSignals>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRadarSignals<TData = Awaited<ReturnType<typeof getRadarSignals>>, TError = ErrorType<ApiError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRadarSignals>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get immutable signal snapshots and real market-data evaluations
+ */
+
+export function useGetRadarSignals<TData = Awaited<ReturnType<typeof getRadarSignals>>, TError = ErrorType<ApiError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRadarSignals>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRadarSignalsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getGetPaperPortfolioUrl = (params: GetPaperPortfolioParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -970,6 +1074,114 @@ export function useGetPaperPortfolio<TData = Awaited<ReturnType<typeof getPaperP
 
 
 
+export const getGetPaperPerformanceUrl = (params: GetPaperPerformanceParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/paper/performance?${stringifiedParams}` : `/api/paper/performance`
+}
+
+/**
+ * @summary Get measured paper-trade performance for an account
+ */
+export const getPaperPerformance = async (params: GetPaperPerformanceParams, options?: Parameters<typeof customFetch>[1]): Promise<PaperPerformance> => {
+
+  return customFetch<PaperPerformance>(getGetPaperPerformanceUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPaperPerformanceQueryKey = (params?: GetPaperPerformanceParams,) => {
+    return [
+    `/api/paper/performance`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetPaperPerformanceQueryOptions = <TData = Awaited<ReturnType<typeof getPaperPerformance>>, TError = ErrorType<unknown>>(params: GetPaperPerformanceParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPaperPerformance>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPaperPerformanceQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPaperPerformance>>> = ({ signal }) => getPaperPerformance(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPaperPerformance>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPaperPerformanceQueryResult = NonNullable<Awaited<ReturnType<typeof getPaperPerformance>>>
+export type GetPaperPerformanceQueryError = ErrorType<unknown>
+
+
+export function useGetPaperPerformance<TData = Awaited<ReturnType<typeof getPaperPerformance>>, TError = ErrorType<unknown>>(
+ params: GetPaperPerformanceParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPaperPerformance>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPaperPerformance>>,
+          TError,
+          Awaited<ReturnType<typeof getPaperPerformance>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPaperPerformance<TData = Awaited<ReturnType<typeof getPaperPerformance>>, TError = ErrorType<unknown>>(
+ params: GetPaperPerformanceParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPaperPerformance>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPaperPerformance>>,
+          TError,
+          Awaited<ReturnType<typeof getPaperPerformance>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPaperPerformance<TData = Awaited<ReturnType<typeof getPaperPerformance>>, TError = ErrorType<unknown>>(
+ params: GetPaperPerformanceParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPaperPerformance>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get measured paper-trade performance for an account
+ */
+
+export function useGetPaperPerformance<TData = Awaited<ReturnType<typeof getPaperPerformance>>, TError = ErrorType<unknown>>(
+ params: GetPaperPerformanceParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPaperPerformance>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPaperPerformanceQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getOpenPaperTradeUrl = () => {
 
 
@@ -979,7 +1191,7 @@ export const getOpenPaperTradeUrl = () => {
 }
 
 /**
- * @summary Open a demo position linked to an analysis run
+ * @summary Open a demo position linked to an analysis run or recorded radar signal
  */
 export const openPaperTrade = async (openPaperTradeRequest: OpenPaperTradeRequest, options?: Parameters<typeof customFetch>[1]): Promise<PaperTradeResult> => {
 
@@ -1045,7 +1257,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type OpenPaperTradeMutationVariables = {data: BodyType<OpenPaperTradeRequest>}
 
     /**
- * @summary Open a demo position linked to an analysis run
+ * @summary Open a demo position linked to an analysis run or recorded radar signal
  */
 export const useOpenPaperTrade = <TError = ErrorType<ApiError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof openPaperTrade>>, TError,OpenPaperTradeMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}

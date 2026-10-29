@@ -15,11 +15,20 @@ export interface PaperPosition {
   positionId: string;
   /** @nullable */
   runId: string | null;
+  /** @nullable */
+  signalId: string | null;
   asset: AssetCode;
   side: PaperPositionSide;
   notionalEur: number;
   quantity: number;
   entryPriceEur: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  feeRateBps: number;
+  entryFeeEur: number;
+  exitFeeEur: number;
   /** @nullable */
   currentPriceEur: number | null;
   currentPriceDataStatus: DataStatus;

@@ -350,14 +350,74 @@ export const GetRadarPerformanceResponse = zod.object({
   "stance": zod.enum(['bullish', 'bearish', 'neutral', 'not_evaluable']),
   "horizonHours": zod.union([zod.literal(1),zod.literal(24),zod.literal(168)]),
   "sampleCount": zod.number().int().min(getRadarPerformanceResponsePerformanceItemSampleCountMin),
+  "status": zod.enum(['insufficient_data', 'measured']),
   "directionalSampleCount": zod.number().int().min(getRadarPerformanceResponsePerformanceItemDirectionalSampleCountMin),
   "hits": zod.number().int().min(getRadarPerformanceResponsePerformanceItemHitsMin),
   "hitRatePercent": zod.number().nullable(),
-  "averageReturnPercent": zod.number()
+  "averageReturnPercent": zod.number().nullable()
 })),
   "errorSources": zod.array(zod.object({
   "category": zod.enum(['missing_data', 'stale_data', 'source_disagreement', 'verification_mismatch', 'signal_conflict']),
   "signalCount": zod.number().int().min(getRadarPerformanceResponseErrorSourcesItemSignalCountMin)
+}))
+})
+
+
+/**
+ * @summary Get immutable signal snapshots and real market-data evaluations
+ */
+export const getRadarSignalsResponseSignalsItemConfidenceScoreMin = 0;
+export const getRadarSignalsResponseSignalsItemConfidenceScoreMax = 100;
+
+
+
+export const GetRadarSignalsResponse = zod.object({
+  "signals": zod.array(zod.object({
+  "signalId": zod.string().uuid(),
+  "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
+  "observedAt": zod.string().datetime({"offset":true}),
+  "referencePriceUsdt": zod.number().nullable(),
+  "entryPriceEur": zod.number().nullable(),
+  "stance": zod.enum(['bullish', 'bearish', 'neutral', 'not_evaluable']),
+  "confidenceScore": zod.number().int().min(getRadarSignalsResponseSignalsItemConfidenceScoreMin).max(getRadarSignalsResponseSignalsItemConfidenceScoreMax),
+  "dataStatus": zod.enum(['live', 'stale', 'missing']),
+  "entryIdea": zod.string(),
+  "invalidation": zod.string(),
+  "invalidationPriceUsdt": zod.number().nullable(),
+  "invalidationPriceEur": zod.number().nullable(),
+  "decision": zod.string(),
+  "momentumRating": zod.number().nullable(),
+  "evidence": zod.array(zod.object({
+  "metric": zod.string(),
+  "value": zod.string(),
+  "source": zod.string(),
+  "timestamp": zod.string().datetime({"offset":true}),
+  "dataStatus": zod.enum(['live', 'stale', 'missing'])
+})),
+  "technicalSignals": zod.array(zod.object({
+  "name": zod.string(),
+  "value": zod.number().nullable(),
+  "weight": zod.number(),
+  "dataStatus": zod.enum(['live', 'stale', 'missing']),
+  "explanation": zod.string()
+})),
+  "dataSources": zod.array(zod.object({
+  "source": zod.string(),
+  "status": zod.enum(['live', 'stale', 'missing']),
+  "checkedAt": zod.string().datetime({"offset":true}),
+  "observedAt": zod.string().datetime({"offset":true}).nullable(),
+  "ageMinutes": zod.number().nullable(),
+  "detail": zod.string()
+})),
+  "evaluations": zod.array(zod.object({
+  "horizonHours": zod.union([zod.literal(1),zod.literal(24),zod.literal(168)]),
+  "evaluatedAt": zod.string().datetime({"offset":true}).nullable(),
+  "returnPercent": zod.number().nullable(),
+  "result": zod.enum(['open', 'successful', 'failed', 'insufficient_data']),
+  "reason": zod.string(),
+  "maxFavorableReturnPercent": zod.number().nullable(),
+  "maxAdverseReturnPercent": zod.number().nullable()
+}))
 }))
 })
 
@@ -368,6 +428,16 @@ export const GetRadarPerformanceResponse = zod.object({
 export const GetPaperPortfolioQueryParams = zod.object({
   "accountId": zod.coerce.string().uuid()
 })
+
+export const getPaperPortfolioResponsePositionsItemFeeRateBpsMin = 0;
+export const getPaperPortfolioResponsePositionsItemFeeRateBpsMax = 100;
+
+export const getPaperPortfolioResponseClosedTradesItemFeeRateBpsMin = 0;
+export const getPaperPortfolioResponseClosedTradesItemFeeRateBpsMax = 100;
+
+export const getPaperPortfolioResponsePerformanceSignalCountMin = 0;
+
+
 
 export const GetPaperPortfolioResponse = zod.object({
   "accountId": zod.string().uuid(),
@@ -381,11 +451,15 @@ export const GetPaperPortfolioResponse = zod.object({
   "positions": zod.array(zod.object({
   "positionId": zod.string().uuid(),
   "runId": zod.string().uuid().nullable(),
+  "signalId": zod.string().uuid().nullable(),
   "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
   "side": zod.enum(['long', 'short']),
   "notionalEur": zod.number(),
   "quantity": zod.number(),
   "entryPriceEur": zod.number(),
+  "feeRateBps": zod.number().int().min(getPaperPortfolioResponsePositionsItemFeeRateBpsMin).max(getPaperPortfolioResponsePositionsItemFeeRateBpsMax),
+  "entryFeeEur": zod.number(),
+  "exitFeeEur": zod.number(),
   "currentPriceEur": zod.number().nullable(),
   "currentPriceDataStatus": zod.enum(['live', 'stale', 'missing']),
   "priceSources": zod.array(zod.object({
@@ -409,11 +483,15 @@ export const GetPaperPortfolioResponse = zod.object({
   "closedTrades": zod.array(zod.object({
   "positionId": zod.string().uuid(),
   "runId": zod.string().uuid().nullable(),
+  "signalId": zod.string().uuid().nullable(),
   "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
   "side": zod.enum(['long', 'short']),
   "notionalEur": zod.number(),
   "quantity": zod.number(),
   "entryPriceEur": zod.number(),
+  "feeRateBps": zod.number().int().min(getPaperPortfolioResponseClosedTradesItemFeeRateBpsMin).max(getPaperPortfolioResponseClosedTradesItemFeeRateBpsMax),
+  "entryFeeEur": zod.number(),
+  "exitFeeEur": zod.number(),
   "currentPriceEur": zod.number().nullable(),
   "currentPriceDataStatus": zod.enum(['live', 'stale', 'missing']),
   "priceSources": zod.array(zod.object({
@@ -435,11 +513,65 @@ export const GetPaperPortfolioResponse = zod.object({
   "closeReason": zod.string().nullable()
 })),
   "performance": zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "signalCount": zod.number().int().min(getPaperPortfolioResponsePerformanceSignalCountMin),
   "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
   "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "profitFactor": zod.number().nullable(),
   "averageWinEur": zod.number().nullable(),
   "averageLossEur": zod.number().nullable(),
   "maxDrawdownEur": zod.number(),
+  "byAsset": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "byStance": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "bySignalType": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "byTimeWindow": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
   "performanceByAgent": zod.array(zod.object({
   "agentId": zod.string(),
   "winRate": zod.number().nullable(),
@@ -450,7 +582,86 @@ export const GetPaperPortfolioResponse = zod.object({
 
 
 /**
- * @summary Open a demo position linked to an analysis run
+ * @summary Get measured paper-trade performance for an account
+ */
+export const GetPaperPerformanceQueryParams = zod.object({
+  "accountId": zod.coerce.string().uuid()
+})
+
+export const getPaperPerformanceResponseSignalCountMin = 0;
+
+
+
+export const GetPaperPerformanceResponse = zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "signalCount": zod.number().int().min(getPaperPerformanceResponseSignalCountMin),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "profitFactor": zod.number().nullable(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "maxDrawdownEur": zod.number(),
+  "byAsset": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "byStance": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "bySignalType": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "byTimeWindow": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "performanceByAgent": zod.array(zod.object({
+  "agentId": zod.string(),
+  "winRate": zod.number().nullable(),
+  "sampleCount": zod.number().int()
+}))
+})
+
+
+/**
+ * @summary Open a demo position linked to an analysis run or recorded radar signal
  */
 export const openPaperTradeBodySizeEurMax = 1000000;
 
@@ -458,26 +669,49 @@ export const openPaperTradeBodyStopLossEurMin = 0;
 
 export const openPaperTradeBodyTakeProfitEurMin = 0;
 
+export const openPaperTradeBodyFeeRateBpsDefault = 10;
+export const openPaperTradeBodyFeeRateBpsMin = 0;
+export const openPaperTradeBodyFeeRateBpsMax = 100;
+
 
 
 export const OpenPaperTradeBody = zod.object({
   "accountId": zod.string().uuid(),
-  "runId": zod.string().uuid(),
+  "runId": zod.string().uuid().nullish(),
+  "signalId": zod.string().uuid().nullish(),
   "side": zod.enum(['long', 'short']),
   "sizeEur": zod.number().min(1).max(openPaperTradeBodySizeEurMax),
   "stopLossEur": zod.number().min(openPaperTradeBodyStopLossEurMin).nullable(),
-  "takeProfitEur": zod.number().min(openPaperTradeBodyTakeProfitEurMin).nullable()
+  "takeProfitEur": zod.number().min(openPaperTradeBodyTakeProfitEurMin).nullable(),
+  "feeRateBps": zod.number().int().min(openPaperTradeBodyFeeRateBpsMin).max(openPaperTradeBodyFeeRateBpsMax).default(openPaperTradeBodyFeeRateBpsDefault)
 })
+
+export const openPaperTradeResponsePositionFeeRateBpsMin = 0;
+export const openPaperTradeResponsePositionFeeRateBpsMax = 100;
+
+export const openPaperTradeResponsePortfolioPositionsItemFeeRateBpsMin = 0;
+export const openPaperTradeResponsePortfolioPositionsItemFeeRateBpsMax = 100;
+
+export const openPaperTradeResponsePortfolioClosedTradesItemFeeRateBpsMin = 0;
+export const openPaperTradeResponsePortfolioClosedTradesItemFeeRateBpsMax = 100;
+
+export const openPaperTradeResponsePortfolioPerformanceSignalCountMin = 0;
+
+
 
 export const OpenPaperTradeResponse = zod.object({
   "position": zod.object({
   "positionId": zod.string().uuid(),
   "runId": zod.string().uuid().nullable(),
+  "signalId": zod.string().uuid().nullable(),
   "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
   "side": zod.enum(['long', 'short']),
   "notionalEur": zod.number(),
   "quantity": zod.number(),
   "entryPriceEur": zod.number(),
+  "feeRateBps": zod.number().int().min(openPaperTradeResponsePositionFeeRateBpsMin).max(openPaperTradeResponsePositionFeeRateBpsMax),
+  "entryFeeEur": zod.number(),
+  "exitFeeEur": zod.number(),
   "currentPriceEur": zod.number().nullable(),
   "currentPriceDataStatus": zod.enum(['live', 'stale', 'missing']),
   "priceSources": zod.array(zod.object({
@@ -510,11 +744,15 @@ export const OpenPaperTradeResponse = zod.object({
   "positions": zod.array(zod.object({
   "positionId": zod.string().uuid(),
   "runId": zod.string().uuid().nullable(),
+  "signalId": zod.string().uuid().nullable(),
   "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
   "side": zod.enum(['long', 'short']),
   "notionalEur": zod.number(),
   "quantity": zod.number(),
   "entryPriceEur": zod.number(),
+  "feeRateBps": zod.number().int().min(openPaperTradeResponsePortfolioPositionsItemFeeRateBpsMin).max(openPaperTradeResponsePortfolioPositionsItemFeeRateBpsMax),
+  "entryFeeEur": zod.number(),
+  "exitFeeEur": zod.number(),
   "currentPriceEur": zod.number().nullable(),
   "currentPriceDataStatus": zod.enum(['live', 'stale', 'missing']),
   "priceSources": zod.array(zod.object({
@@ -538,11 +776,15 @@ export const OpenPaperTradeResponse = zod.object({
   "closedTrades": zod.array(zod.object({
   "positionId": zod.string().uuid(),
   "runId": zod.string().uuid().nullable(),
+  "signalId": zod.string().uuid().nullable(),
   "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
   "side": zod.enum(['long', 'short']),
   "notionalEur": zod.number(),
   "quantity": zod.number(),
   "entryPriceEur": zod.number(),
+  "feeRateBps": zod.number().int().min(openPaperTradeResponsePortfolioClosedTradesItemFeeRateBpsMin).max(openPaperTradeResponsePortfolioClosedTradesItemFeeRateBpsMax),
+  "entryFeeEur": zod.number(),
+  "exitFeeEur": zod.number(),
   "currentPriceEur": zod.number().nullable(),
   "currentPriceDataStatus": zod.enum(['live', 'stale', 'missing']),
   "priceSources": zod.array(zod.object({
@@ -564,11 +806,65 @@ export const OpenPaperTradeResponse = zod.object({
   "closeReason": zod.string().nullable()
 })),
   "performance": zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "signalCount": zod.number().int().min(openPaperTradeResponsePortfolioPerformanceSignalCountMin),
   "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
   "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "profitFactor": zod.number().nullable(),
   "averageWinEur": zod.number().nullable(),
   "averageLossEur": zod.number().nullable(),
   "maxDrawdownEur": zod.number(),
+  "byAsset": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "byStance": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "bySignalType": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "byTimeWindow": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
   "performanceByAgent": zod.array(zod.object({
   "agentId": zod.string(),
   "winRate": zod.number().nullable(),
@@ -590,15 +886,32 @@ export const ClosePaperTradeBody = zod.object({
   "accountId": zod.string().uuid()
 })
 
+export const closePaperTradeResponsePositionFeeRateBpsMin = 0;
+export const closePaperTradeResponsePositionFeeRateBpsMax = 100;
+
+export const closePaperTradeResponsePortfolioPositionsItemFeeRateBpsMin = 0;
+export const closePaperTradeResponsePortfolioPositionsItemFeeRateBpsMax = 100;
+
+export const closePaperTradeResponsePortfolioClosedTradesItemFeeRateBpsMin = 0;
+export const closePaperTradeResponsePortfolioClosedTradesItemFeeRateBpsMax = 100;
+
+export const closePaperTradeResponsePortfolioPerformanceSignalCountMin = 0;
+
+
+
 export const ClosePaperTradeResponse = zod.object({
   "position": zod.object({
   "positionId": zod.string().uuid(),
   "runId": zod.string().uuid().nullable(),
+  "signalId": zod.string().uuid().nullable(),
   "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
   "side": zod.enum(['long', 'short']),
   "notionalEur": zod.number(),
   "quantity": zod.number(),
   "entryPriceEur": zod.number(),
+  "feeRateBps": zod.number().int().min(closePaperTradeResponsePositionFeeRateBpsMin).max(closePaperTradeResponsePositionFeeRateBpsMax),
+  "entryFeeEur": zod.number(),
+  "exitFeeEur": zod.number(),
   "currentPriceEur": zod.number().nullable(),
   "currentPriceDataStatus": zod.enum(['live', 'stale', 'missing']),
   "priceSources": zod.array(zod.object({
@@ -631,11 +944,15 @@ export const ClosePaperTradeResponse = zod.object({
   "positions": zod.array(zod.object({
   "positionId": zod.string().uuid(),
   "runId": zod.string().uuid().nullable(),
+  "signalId": zod.string().uuid().nullable(),
   "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
   "side": zod.enum(['long', 'short']),
   "notionalEur": zod.number(),
   "quantity": zod.number(),
   "entryPriceEur": zod.number(),
+  "feeRateBps": zod.number().int().min(closePaperTradeResponsePortfolioPositionsItemFeeRateBpsMin).max(closePaperTradeResponsePortfolioPositionsItemFeeRateBpsMax),
+  "entryFeeEur": zod.number(),
+  "exitFeeEur": zod.number(),
   "currentPriceEur": zod.number().nullable(),
   "currentPriceDataStatus": zod.enum(['live', 'stale', 'missing']),
   "priceSources": zod.array(zod.object({
@@ -659,11 +976,15 @@ export const ClosePaperTradeResponse = zod.object({
   "closedTrades": zod.array(zod.object({
   "positionId": zod.string().uuid(),
   "runId": zod.string().uuid().nullable(),
+  "signalId": zod.string().uuid().nullable(),
   "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
   "side": zod.enum(['long', 'short']),
   "notionalEur": zod.number(),
   "quantity": zod.number(),
   "entryPriceEur": zod.number(),
+  "feeRateBps": zod.number().int().min(closePaperTradeResponsePortfolioClosedTradesItemFeeRateBpsMin).max(closePaperTradeResponsePortfolioClosedTradesItemFeeRateBpsMax),
+  "entryFeeEur": zod.number(),
+  "exitFeeEur": zod.number(),
   "currentPriceEur": zod.number().nullable(),
   "currentPriceDataStatus": zod.enum(['live', 'stale', 'missing']),
   "priceSources": zod.array(zod.object({
@@ -685,11 +1006,65 @@ export const ClosePaperTradeResponse = zod.object({
   "closeReason": zod.string().nullable()
 })),
   "performance": zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "signalCount": zod.number().int().min(closePaperTradeResponsePortfolioPerformanceSignalCountMin),
   "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
   "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "profitFactor": zod.number().nullable(),
   "averageWinEur": zod.number().nullable(),
   "averageLossEur": zod.number().nullable(),
   "maxDrawdownEur": zod.number(),
+  "byAsset": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "byStance": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "bySignalType": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "byTimeWindow": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
   "performanceByAgent": zod.array(zod.object({
   "agentId": zod.string(),
   "winRate": zod.number().nullable(),
@@ -713,6 +1088,16 @@ export const ResetPaperPortfolioBody = zod.object({
   "startingBalanceEur": zod.number().min(resetPaperPortfolioBodyStartingBalanceEurMin).max(resetPaperPortfolioBodyStartingBalanceEurMax)
 })
 
+export const resetPaperPortfolioResponsePositionsItemFeeRateBpsMin = 0;
+export const resetPaperPortfolioResponsePositionsItemFeeRateBpsMax = 100;
+
+export const resetPaperPortfolioResponseClosedTradesItemFeeRateBpsMin = 0;
+export const resetPaperPortfolioResponseClosedTradesItemFeeRateBpsMax = 100;
+
+export const resetPaperPortfolioResponsePerformanceSignalCountMin = 0;
+
+
+
 export const ResetPaperPortfolioResponse = zod.object({
   "accountId": zod.string().uuid(),
   "currency": zod.enum(['EUR']),
@@ -725,11 +1110,15 @@ export const ResetPaperPortfolioResponse = zod.object({
   "positions": zod.array(zod.object({
   "positionId": zod.string().uuid(),
   "runId": zod.string().uuid().nullable(),
+  "signalId": zod.string().uuid().nullable(),
   "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
   "side": zod.enum(['long', 'short']),
   "notionalEur": zod.number(),
   "quantity": zod.number(),
   "entryPriceEur": zod.number(),
+  "feeRateBps": zod.number().int().min(resetPaperPortfolioResponsePositionsItemFeeRateBpsMin).max(resetPaperPortfolioResponsePositionsItemFeeRateBpsMax),
+  "entryFeeEur": zod.number(),
+  "exitFeeEur": zod.number(),
   "currentPriceEur": zod.number().nullable(),
   "currentPriceDataStatus": zod.enum(['live', 'stale', 'missing']),
   "priceSources": zod.array(zod.object({
@@ -753,11 +1142,15 @@ export const ResetPaperPortfolioResponse = zod.object({
   "closedTrades": zod.array(zod.object({
   "positionId": zod.string().uuid(),
   "runId": zod.string().uuid().nullable(),
+  "signalId": zod.string().uuid().nullable(),
   "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
   "side": zod.enum(['long', 'short']),
   "notionalEur": zod.number(),
   "quantity": zod.number(),
   "entryPriceEur": zod.number(),
+  "feeRateBps": zod.number().int().min(resetPaperPortfolioResponseClosedTradesItemFeeRateBpsMin).max(resetPaperPortfolioResponseClosedTradesItemFeeRateBpsMax),
+  "entryFeeEur": zod.number(),
+  "exitFeeEur": zod.number(),
   "currentPriceEur": zod.number().nullable(),
   "currentPriceDataStatus": zod.enum(['live', 'stale', 'missing']),
   "priceSources": zod.array(zod.object({
@@ -779,11 +1172,65 @@ export const ResetPaperPortfolioResponse = zod.object({
   "closeReason": zod.string().nullable()
 })),
   "performance": zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "signalCount": zod.number().int().min(resetPaperPortfolioResponsePerformanceSignalCountMin),
   "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
   "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "profitFactor": zod.number().nullable(),
   "averageWinEur": zod.number().nullable(),
   "averageLossEur": zod.number().nullable(),
   "maxDrawdownEur": zod.number(),
+  "byAsset": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "byStance": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "bySignalType": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
+  "byTimeWindow": zod.array(zod.object({
+  "status": zod.enum(['insufficient_data', 'measured']),
+  "key": zod.string(),
+  "tradeCount": zod.number().int(),
+  "winnerCount": zod.number().int(),
+  "loserCount": zod.number().int(),
+  "winRate": zod.number().nullable(),
+  "totalPnlEur": zod.number(),
+  "averageWinEur": zod.number().nullable(),
+  "averageLossEur": zod.number().nullable(),
+  "profitFactor": zod.number().nullable()
+})),
   "performanceByAgent": zod.array(zod.object({
   "agentId": zod.string(),
   "winRate": zod.number().nullable(),

@@ -5,6 +5,8 @@ import {
   ClosePaperTradeResponse,
   GetPaperPortfolioQueryParams,
   GetPaperPortfolioResponse,
+  GetPaperPerformanceQueryParams,
+  GetPaperPerformanceResponse,
   OpenPaperTradeBody,
   OpenPaperTradeResponse,
   ResetPaperPortfolioBody,
@@ -13,6 +15,7 @@ import {
 import {
   closePaperPosition,
   getPaperPortfolio,
+  getPaperPerformance,
   openPaperPosition,
   PaperServiceError,
   resetPaperPortfolio,
@@ -51,6 +54,24 @@ router.get("/paper/portfolio", async (req, res) => {
       "Unable to read paper portfolio",
     );
     sendError(res, 503, "PAPER_PORTFOLIO_UNAVAILABLE", "Das Demo-Portfolio ist nicht verfügbar.");
+  }
+});
+
+router.get("/paper/performance", async (req, res) => {
+  const parsed = GetPaperPerformanceQueryParams.safeParse(req.query);
+  if (!parsed.success) {
+    sendError(res, 400, "INVALID_PAPER_ACCOUNT", "Konto-ID ist ungültig.");
+    return;
+  }
+  try {
+    const performance = await getPaperPerformance(parsed.data.accountId);
+    res.json(GetPaperPerformanceResponse.parse(performance));
+  } catch (error) {
+    req.log.error(
+      { errorName: error instanceof Error ? error.name : "unknown" },
+      "Unable to calculate paper-trading performance",
+    );
+    sendError(res, 503, "PAPER_PERFORMANCE_UNAVAILABLE", "Die Demo-Performance ist nicht verfügbar.");
   }
 });
 

@@ -8,6 +8,7 @@
 import type { AssetCode } from './assetCode';
 import type { RadarPerformanceItemHorizonHours } from './radarPerformanceItemHorizonHours';
 import type { RadarPerformanceItemStance } from './radarPerformanceItemStance';
+import type { RadarPerformanceItemStatus } from './radarPerformanceItemStatus';
 
 export interface RadarPerformanceItem {
   asset: AssetCode;
@@ -16,11 +17,13 @@ export interface RadarPerformanceItem {
   horizonHours: RadarPerformanceItemHorizonHours;
   /** @minimum 0 */
   sampleCount: number;
+  status: RadarPerformanceItemStatus;
   /** @minimum 0 */
   directionalSampleCount: number;
   /** @minimum 0 */
   hits: number;
   /** @nullable */
   hitRatePercent: number | null;
-  averageReturnPercent: number;
+  /** @nullable */
+  averageReturnPercent: number | null;
 }

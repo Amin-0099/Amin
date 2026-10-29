@@ -20,8 +20,12 @@ import {
 } from "lucide-react";
 import {
   getAnalysisRun,
+  getPaperPortfolio,
   getRadar,
   getRadarPerformance,
+  getRadarSignals,
+  openPaperTrade,
+  closePaperTrade,
   startAnalysisRun,
   stopAnalysisRun,
   type AgentResult,
@@ -29,6 +33,8 @@ import {
   type AssetCode,
   type FinalReport,
   type MarketAsset,
+  type PaperPortfolio,
+  type RadarSignalSnapshot,
   type RadarErrorSource,
   type RadarPerformanceItem,
 } from "@workspace/api-client-react";
@@ -250,18 +256,18 @@ function PerformanceTable({
         ? <p className="empty-performance">No evaluated outcomes yet. Results appear only after a recorded 1h, 24h, or 7d horizon has elapsed and fresh candles are available.</p>
         : <div className="radar-table-wrap">
             <table className="radar-table performance-table">
-              <thead><tr><th>Asset</th><th>Signal type</th><th>Horizon</th><th>Samples</th><th>Directional samples</th><th>Hit rate</th><th>Average return</th></tr></thead>
+              <thead><tr><th>Asset</th><th>Signal type</th><th>Horizon</th><th>Samples</th><th>Status</th><th>Directional samples</th><th>Hit rate</th><th>Average return</th></tr></thead>
               <tbody>{items.map((item) => (
                 <tr key={`${item.asset}:${item.signalType}:${item.stance}:${item.horizonHours}`}>
                   <td><strong>{item.asset}</strong></td><td>{item.signalType} · {item.stance}</td>
                   <td>{item.horizonHours === 168 ? "7d" : `${item.horizonHours}h`}</td>
-                  <td>{item.sampleCount}</td><td>{item.directionalSampleCount}</td>
+                  <td>{item.sampleCount}</td><td>{item.status.replaceAll("_", " ")}</td><td>{item.directionalSampleCount}</td>
                   <td>{item.hitRatePercent === null ? "n/a" : `${item.hitRatePercent.toFixed(1)}%`}</td>
                   <td>{formatPercent(item.averageReturnPercent)}</td>
                 </tr>
               ))}</tbody>
             </table>
-            <p className="performance-caveat">Historical sample results only. They are not a forecast or guaranteed hit rate.</p>
+            <p className="performance-caveat">Rates and average returns are withheld until at least five completed observations per group. These historical samples are not a forecast or guaranteed hit rate.</p>
           </div>}
       <div className="error-source-list">
         <strong>Observed signal quality issues</strong>
@@ -270,6 +276,174 @@ function PerformanceTable({
           : <span>No classified data-quality or signal conflicts in stored records.</span>}
       </div>
     </>
+  );
+}
+
+function PaperTradingSection({
+  accountId,
+  portfolio,
+  portfolioError,
+  signals,
+  signalError,
+  sizeEur,
+  feeRateBps,
+  busyId,
+  onSizeChange,
+  onFeeRateChange,
+  onOpenSignal,
+  onClosePosition,
+}: {
+  accountId: string | null;
+  portfolio: PaperPortfolio | null;
+  portfolioError: string | null;
+  signals: RadarSignalSnapshot[];
+  signalError: string | null;
+  sizeEur: number;
+  feeRateBps: number;
+  busyId: string | null;
+  onSizeChange: (value: number) => void;
+  onFeeRateChange: (value: number) => void;
+  onOpenSignal: (signal: RadarSignalSnapshot) => void;
+  onClosePosition: (positionId: string) => void;
+}) {
+  const performance = portfolio?.performance;
+  const performanceGroups = performance ? [
+    { label: "By asset", rows: performance.byAsset },
+    { label: "By stance", rows: performance.byStance },
+    { label: "By signal type", rows: performance.bySignalType },
+    { label: "By close month", rows: performance.byTimeWindow },
+  ] : [];
+  return (
+    <section className="paper-section" id="paper-trading">
+      <div className="section-heading">
+        <div>
+          <div className="section-kicker"><span className="step-index">05</span><span>VIRTUAL POSITIONS · NO EXCHANGE ORDERS</span></div>
+          <h2>Paper trading</h2>
+        </div>
+        <span className="prototype-pill paper-only-pill"><span /> PAPER / DEMO ONLY</span>
+      </div>
+      <p className="paper-disclaimer">All entries, exits, fees, balances, and P&amp;L below are virtual. No real orders, wallet, or funds are connected.</p>
+      {portfolioError && <p className="inline-error" role="alert">Paper portfolio unavailable: {portfolioError}</p>}
+      {!accountId && <p className="inline-error">A persistent paper account is required to load positions.</p>}
+      {portfolio && (
+        <>
+          <div className="paper-metrics">
+            <article><span>VIRTUAL START BALANCE</span><strong>{formatPrice(portfolio.startingBalanceEur)}</strong></article>
+            <article><span>AVAILABLE DEMO CASH</span><strong>{formatPrice(portfolio.cashBalanceEur)}</strong></article>
+            <article><span>VIRTUAL EQUITY</span><strong>{portfolio.equityEur === null ? "missing live valuation" : formatPrice(portfolio.equityEur)}</strong></article>
+            <article><span>REALIZED / UNREALIZED P&amp;L</span><strong>{formatPrice(portfolio.realizedPnlEur)} / {portfolio.unrealizedPnlEur === null ? "missing" : formatPrice(portfolio.unrealizedPnlEur)}</strong></article>
+          </div>
+          <div className="paper-controls">
+            <label>Paper size (EUR)<input type="number" min="1" max="1000000" step="1" value={sizeEur} onChange={(event) => onSizeChange(Number(event.target.value))} /></label>
+            <label>Demo fee assumption (bps / side)<input type="number" min="0" max="100" step="1" value={feeRateBps} onChange={(event) => onFeeRateChange(Number(event.target.value))} /></label>
+            <span>Fees are charged virtually on both entry and exit.</span>
+          </div>
+          {portfolio.performance.status === "insufficient_data"
+            ? <>
+                <p className="empty-performance">Insufficient statistical sample ({performance?.tradeCount ?? 0}/5 completed trades). Rates, averages, and profit factor are withheld; displayed counts and P&amp;L are observed paper results only.</p>
+                <div className="paper-performance-grid">
+                  <article><span>SAVED RADAR SIGNALS</span><strong>{performance?.signalCount ?? 0}</strong></article>
+                  <article><span>CLOSED TRADES</span><strong>{performance?.tradeCount ?? 0}</strong></article>
+                  <article><span>WINNERS / LOSERS</span><strong>{performance?.winnerCount ?? 0} / {performance?.loserCount ?? 0}</strong></article>
+                  <article><span>OBSERVED NET P&amp;L</span><strong>{formatPrice(performance?.totalPnlEur ?? 0)}</strong></article>
+                </div>
+              </>
+            : <div className="paper-performance-grid">
+                <article><span>SAVED RADAR SIGNALS</span><strong>{performance?.signalCount ?? 0}</strong></article>
+                <article><span>CLOSED TRADES</span><strong>{performance?.tradeCount ?? 0}</strong></article>
+                <article><span>WINNERS / LOSERS</span><strong>{performance?.winnerCount ?? 0} / {performance?.loserCount ?? 0}</strong></article>
+                <article><span>HISTORICAL WIN RATE</span><strong>{performance?.winRate === null ? "insufficient data" : `${performance?.winRate.toFixed(1)}%`}</strong></article>
+                <article><span>NET REALIZED P&amp;L</span><strong>{formatPrice(performance?.totalPnlEur ?? 0)}</strong></article>
+                <article><span>AVERAGE WIN / LOSS</span><strong>{performance?.averageWinEur === null ? "n/a" : formatPrice(performance?.averageWinEur ?? null)} / {performance?.averageLossEur === null ? "n/a" : formatPrice(performance?.averageLossEur ?? null)}</strong></article>
+                <article><span>PROFIT FACTOR</span><strong>{performance?.profitFactor === null ? "n/a" : performance?.profitFactor.toFixed(2)}</strong></article>
+                <article><span>MAX REALIZED DRAWDOWN</span><strong>{formatPrice(performance?.maxDrawdownEur ?? 0)}</strong></article>
+              </div>}
+          {performance?.status === "measured" && (
+            <div className="paper-breakdowns">
+              {performanceGroups.map(({ label, rows }) => (
+                <div className="paper-breakdown" key={label}>
+                  <h4>{label}</h4>
+                  <table className="paper-breakdown-table">
+                    <thead><tr><th>Group</th><th>Trades</th><th>Win rate</th><th>Net P&amp;L</th><th>Profit factor</th></tr></thead>
+                    <tbody>{rows.map((row) => (
+                      <tr key={row.key}>
+                        <td>{row.key}</td><td>{row.tradeCount}</td>
+                        <td>{row.winRate === null ? `insufficient data (${row.tradeCount}/5)` : `${row.winRate.toFixed(1)}%`}</td>
+                        <td>{formatPrice(row.totalPnlEur)}</td>
+                        <td>{row.profitFactor === null ? row.status === "insufficient_data" ? `insufficient data (${row.tradeCount}/5)` : "not defined" : row.profitFactor.toFixed(2)}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          )}
+          <h3 className="paper-subheading">Open virtual positions</h3>
+          {portfolio.positions.length === 0
+            ? <p className="empty-performance">No open paper positions.</p>
+            : <div className="radar-table-wrap"><table className="radar-table">
+                <thead><tr><th>Asset / side</th><th>Entry / current</th><th>Size / quantity</th><th>Stop</th><th>Fees</th><th>Unrealized P&amp;L</th><th>Action</th></tr></thead>
+                <tbody>{portfolio.positions.map((position) => (
+                  <tr key={position.positionId}>
+                    <td><strong>{position.asset}</strong><small>{position.side.toUpperCase()} · {position.signalId ? "signal-linked" : "run-linked"}</small></td>
+                    <td>{formatPrice(position.entryPriceEur)} / {position.currentPriceEur === null ? position.currentPriceDataStatus : formatPrice(position.currentPriceEur)}<small>{position.currentPriceDataStatus.toUpperCase()}</small></td>
+                    <td>{formatPrice(position.notionalEur)} / {position.quantity.toPrecision(6)}</td>
+                    <td>{position.stopLossEur === null ? "not set" : formatPrice(position.stopLossEur)}</td>
+                    <td>{position.feeRateBps} bps · {formatPrice(position.entryFeeEur + position.exitFeeEur)}</td>
+                    <td>{position.unrealizedPnlEur === null ? "missing fresh quote" : formatPrice(position.unrealizedPnlEur)}</td>
+                    <td><button className="button-quiet paper-action" disabled={busyId !== null} onClick={() => onClosePosition(position.positionId)}>{busyId === position.positionId ? "Closing…" : "Close demo"}</button></td>
+                  </tr>
+                ))}</tbody>
+              </table></div>}
+          <h3 className="paper-subheading">Closed paper-trade history</h3>
+          {portfolio.closedTrades.length === 0
+            ? <p className="empty-performance">No closed trade results yet.</p>
+            : <div className="radar-table-wrap"><table className="radar-table">
+                <thead><tr><th>Asset / link</th><th>Opened / closed</th><th>Entry / exit</th><th>Fees</th><th>Realized P&amp;L</th><th>Close reason</th></tr></thead>
+                <tbody>{portfolio.closedTrades.map((position) => (
+                  <tr key={position.positionId}>
+                    <td><strong>{position.asset}</strong><small>{position.signalId ? `signal ${position.signalId.slice(0, 8)}` : `run ${position.runId?.slice(0, 8) ?? "unlinked"}`}</small></td>
+                    <td>{formatTimestamp(position.openedAt)}<small>{formatTimestamp(position.closedAt)}</small></td>
+                    <td>{formatPrice(position.entryPriceEur)} / {position.exitPriceEur === null ? "missing" : formatPrice(position.exitPriceEur)}</td>
+                    <td>{position.feeRateBps} bps · {formatPrice(position.entryFeeEur + position.exitFeeEur)}</td>
+                    <td>{position.realizedPnlEur === null ? "insufficient data" : formatPrice(position.realizedPnlEur)}</td>
+                    <td>{position.closeReason ?? "unknown"}</td>
+                  </tr>
+                ))}</tbody>
+              </table></div>}
+        </>
+      )}
+      <h3 className="paper-subheading">Immutable radar snapshots and later outcomes</h3>
+      {signalError && <p className="inline-error" role="alert">Signal history unavailable: {signalError}</p>}
+      {!signalError && signals.length === 0 && <p className="empty-performance">No persisted signal snapshots are available.</p>}
+      {signals.length > 0 && <div className="radar-table-wrap"><table className="radar-table">
+        <thead><tr><th>Signal / context</th><th>Entry / invalidation</th><th>Quality / data</th><th>1h</th><th>24h</th><th>7d</th><th>Paper entry</th></tr></thead>
+        <tbody>{signals.map((signal) => {
+          const signalAgeMs = Date.now() - Date.parse(signal.observedAt);
+          const eligible = signal.dataStatus === "live" &&
+            ["bullish", "bearish"].includes(signal.stance) &&
+            signalAgeMs >= 0 &&
+            signalAgeMs <= 90 * 60 * 1_000;
+          const statusText = (horizon: number) =>
+            signal.evaluations.find((result) => result.horizonHours === horizon);
+          return (
+            <tr key={signal.signalId}>
+              <td><strong>{signal.asset} · {signal.stance.toUpperCase()}</strong><small>{formatTimestamp(signal.observedAt)} · {signal.decision}</small><small>{signal.entryIdea}</small></td>
+              <td>{signal.entryPriceEur === null ? "missing" : formatPrice(signal.entryPriceEur)}<small>Invalidation: {signal.invalidationPriceEur === null ? "not quantified" : formatPrice(signal.invalidationPriceEur)}</small></td>
+              <td>{signal.confidenceScore}/100 quality<small>{signal.dataStatus.toUpperCase()} · momentum {signal.momentumRating === null ? "missing" : signal.momentumRating.toFixed(1)}</small><small>{signal.evidence.length} evidence items · {signal.dataSources.length} sources</small></td>
+              {[1, 24, 168].map((horizon) => {
+                const evaluation = statusText(horizon);
+                return <td key={horizon}>{evaluation?.result.replaceAll("_", " ") ?? "insufficient data"}<small>{evaluation?.returnPercent === null || evaluation?.returnPercent === undefined ? "no measured return" : formatPercent(evaluation.returnPercent)}</small></td>;
+              })}
+              <td>{eligible
+                ? <button className="button-primary paper-action" disabled={!portfolio || busyId !== null || !Number.isFinite(sizeEur) || sizeEur <= 0 || !Number.isInteger(feeRateBps) || feeRateBps < 0 || feeRateBps > 100} onClick={() => onOpenSignal(signal)}>{busyId === signal.signalId ? "Opening…" : "Open demo"}</button>
+                : <span className="paper-ineligible">not actionable</span>}</td>
+            </tr>
+          );
+        })}</tbody>
+      </table></div>}
+      <p className="performance-caveat">Signal outcome classifications use later completed provider candles only. Missing/freshness gaps remain insufficient data. Paper P&amp;L includes the displayed demo fee assumption; results do not guarantee future performance.</p>
+    </section>
   );
 }
 
@@ -290,6 +464,13 @@ function App() {
   const [performance, setPerformance] = useState<RadarPerformanceItem[]>([]);
   const [errorSources, setErrorSources] = useState<RadarErrorSource[]>([]);
   const [performanceError, setPerformanceError] = useState<string | null>(null);
+  const [signalSnapshots, setSignalSnapshots] = useState<RadarSignalSnapshot[]>([]);
+  const [signalHistoryError, setSignalHistoryError] = useState<string | null>(null);
+  const [paperPortfolio, setPaperPortfolio] = useState<PaperPortfolio | null>(null);
+  const [paperError, setPaperError] = useState<string | null>(null);
+  const [paperSizeEur, setPaperSizeEur] = useState(250);
+  const [feeRateBps, setFeeRateBps] = useState(10);
+  const [paperActionId, setPaperActionId] = useState<string | null>(null);
   const [loadingRadar, setLoadingRadar] = useState(true);
   const requestId = useRef(0);
   const pollController = useRef<AbortController | null>(null);
@@ -329,6 +510,15 @@ function App() {
       } catch (error) {
         if (active && !controller.signal.aborted) setPerformanceError(errorMessage(error));
       }
+      try {
+        const result = await getRadarSignals({ signal: controller.signal });
+        if (active) {
+          setSignalSnapshots(result.signals);
+          setSignalHistoryError(null);
+        }
+      } catch (error) {
+        if (active && !controller.signal.aborted) setSignalHistoryError(errorMessage(error));
+      }
       if (active) timer = setTimeout(() => void refresh(), 60_000);
     };
     void refresh();
@@ -338,6 +528,35 @@ function App() {
       if (timer) clearTimeout(timer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!accountId) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let controller: AbortController | null = null;
+    const refresh = async () => {
+      controller = new AbortController();
+      try {
+        const result = await getPaperPortfolio(
+          { accountId },
+          { signal: controller.signal },
+        );
+        if (active) {
+          setPaperPortfolio(result);
+          setPaperError(null);
+        }
+      } catch (error) {
+        if (active && !controller.signal.aborted) setPaperError(errorMessage(error));
+      }
+      if (active) timer = setTimeout(() => void refresh(), 60_000);
+    };
+    void refresh();
+    return () => {
+      active = false;
+      controller?.abort();
+      if (timer) clearTimeout(timer);
+    };
+  }, [accountId]);
 
   useEffect(() => () => {
     requestId.current += 1;
@@ -441,6 +660,49 @@ function App() {
     }, ...entries]);
   };
 
+  const refreshSignalHistory = async () => {
+    const result = await getRadarSignals();
+    setSignalSnapshots(result.signals);
+    setSignalHistoryError(null);
+  };
+
+  const openSignalPosition = async (signal: RadarSignalSnapshot) => {
+    if (!accountId || paperActionId) return;
+    setPaperActionId(signal.signalId);
+    setPaperError(null);
+    try {
+      const result = await openPaperTrade({
+        accountId,
+        signalId: signal.signalId,
+        side: signal.stance === "bullish" ? "long" : "short",
+        sizeEur: paperSizeEur,
+        stopLossEur: signal.invalidationPriceEur,
+        takeProfitEur: null,
+        feeRateBps,
+      });
+      setPaperPortfolio(result.portfolio);
+      await refreshSignalHistory();
+    } catch (error) {
+      setPaperError(errorMessage(error));
+    } finally {
+      setPaperActionId(null);
+    }
+  };
+
+  const closePaperPosition = async (positionId: string) => {
+    if (!accountId || paperActionId) return;
+    setPaperActionId(positionId);
+    setPaperError(null);
+    try {
+      const result = await closePaperTrade(positionId, { accountId });
+      setPaperPortfolio(result.portfolio);
+    } catch (error) {
+      setPaperError(errorMessage(error));
+    } finally {
+      setPaperActionId(null);
+    }
+  };
+
   const jumpTo = (section: string) => {
     setActiveNav(section);
     setMobileNavOpen(false);
@@ -473,6 +735,7 @@ function App() {
           <button className={`nav-item ${activeNav === "Activity" ? "selected" : ""}`} onClick={() => jumpTo("Activity")}><MessageSquareText size={17} /><span>Agent activity</span>{running && <span className="live-pip" />}</button>
           <button className={`nav-item ${activeNav === "Final Report" ? "selected" : ""}`} onClick={() => jumpTo("Final Report")}><FileText size={17} /><span>Final report</span>{report && <span className="nav-dot" />}</button>
           <button className={`nav-item ${activeNav === "Performance" ? "selected" : ""}`} onClick={() => jumpTo("Performance")}><CheckCheck size={17} /><span>Signal evaluation</span></button>
+          <button className={`nav-item ${activeNav === "Paper trading" ? "selected" : ""}`} onClick={() => jumpTo("Paper trading")}><Activity size={17} /><span>Paper trading</span></button>
         </nav>
         <div className="sidebar-rule" />
         <div className="nav-label">SYSTEM</div>
@@ -488,7 +751,7 @@ function App() {
 
         <div className="content-area">
           <section className="page-heading" id="overview">
-            <div className="heading-main"><div className="eyebrow"><span className="eyebrow-line" /> PHASE 4 <span className="eyebrow-sep">/</span> REAL MARKET INTELLIGENCE</div><h1>Market analysis<span className="title-period">.</span></h1><p>Source-backed indicators, explicit data quality, and measured outcomes. No live trading.</p></div>
+            <div className="heading-main"><div className="eyebrow"><span className="eyebrow-line" /> PHASE 5 <span className="eyebrow-sep">/</span> PAPER TRADING &amp; SIGNAL EVALUATION</div><h1>Market analysis<span className="title-period">.</span></h1><p>Source-backed signals, virtual positions, and measured outcomes. No live trading.</p></div>
             <div className="heading-actions">{report && <button className="button-quiet" onClick={() => resetRun()}><RotateCcw size={15} /> New analysis</button>}<div className={`run-state ${running ? "is-running" : report ? "is-complete" : ""}`} data-testid="status-analysis"><span className="run-state-indicator" />{statusLabel}</div></div>
           </section>
 
@@ -511,6 +774,21 @@ function App() {
             {radar && <p className={`learning-status ${radar.learningStatus}`}>Signal recording: {radar.learningStatus}. Every displayed decision includes source statuses and its analysis timestamp.</p>}
             {radar ? <RadarTable items={radar.assets} /> : <div className="report-empty">{loadingRadar ? "Loading public market data…" : "No market data available. Missing sources are not substituted."}</div>}
           </section>
+
+          <PaperTradingSection
+            accountId={accountId}
+            portfolio={paperPortfolio}
+            portfolioError={paperError}
+            signals={signalSnapshots}
+            signalError={signalHistoryError}
+            sizeEur={paperSizeEur}
+            feeRateBps={feeRateBps}
+            busyId={paperActionId}
+            onSizeChange={setPaperSizeEur}
+            onFeeRateChange={setFeeRateBps}
+            onOpenSignal={(signal) => void openSignalPosition(signal)}
+            onClosePosition={(positionId) => void closePaperPosition(positionId)}
+          />
 
           <div className="dashboard-layout">
             <div className="primary-column">

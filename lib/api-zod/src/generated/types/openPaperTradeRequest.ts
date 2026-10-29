@@ -9,7 +9,10 @@ import type { OpenPaperTradeRequestSide } from './openPaperTradeRequestSide';
 
 export interface OpenPaperTradeRequest {
   accountId: string;
-  runId: string;
+  /** @nullable */
+  runId?: string | null;
+  /** @nullable */
+  signalId?: string | null;
   side: OpenPaperTradeRequestSide;
   /**
      * @minimum 1
@@ -26,4 +29,9 @@ export interface OpenPaperTradeRequest {
      * @nullable
      */
   takeProfitEur: number | null;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  feeRateBps?: number;
 }
