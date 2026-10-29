@@ -5,11 +5,22 @@
  * AMIN AI DESK analysis, market radar, and paper-trading API
  * OpenAPI spec version: 0.1.0
  */
+import type { AgentEvidence } from './agentEvidence';
 import type { ConfidenceBreakdown } from './confidenceBreakdown';
+import type { DataStatus } from './dataStatus';
 import type { FinalReportDecision } from './finalReportDecision';
+import type { FinalReportRadarState } from './finalReportRadarState';
+import type { FinalReportStance } from './finalReportStance';
+import type { MarketCurrentData } from './marketCurrentData';
 import type { ScoreFactor } from './scoreFactor';
 
 export interface FinalReport {
+  stance: FinalReportStance;
+  radarState: FinalReportRadarState;
+  generatedAt: string;
+  dataStatus: DataStatus;
+  currentData: MarketCurrentData;
+  evidence: AgentEvidence[];
   decision: FinalReportDecision;
   summary: string;
   /**

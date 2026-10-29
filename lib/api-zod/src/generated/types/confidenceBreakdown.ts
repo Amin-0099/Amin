@@ -8,8 +8,12 @@
 
 export interface ConfidenceBreakdown {
   coverageScore: number;
+  freshnessScore: number;
   agreementScore: number;
   sourceConsistencyScore: number;
+  verificationScore: number;
+  confirmationCount: number;
+  contradictionCount: number;
   liveAgentCount: number;
   totalAgentCount: number;
   liveSourceCount: number;

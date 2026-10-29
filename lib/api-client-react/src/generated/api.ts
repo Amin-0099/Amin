@@ -43,6 +43,7 @@ import type {
   PaperAccountRequest,
   PaperPortfolio,
   PaperTradeResult,
+  RadarPerformanceResponse,
   RadarResponse,
   ResetPaperRequest,
   StopAnalysisRunRequest,
@@ -748,6 +749,107 @@ export function useGetRadar<TData = Awaited<ReturnType<typeof getRadar>>, TError
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetRadarQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetRadarPerformanceUrl = () => {
+
+
+
+
+  return `/api/radar/performance`
+}
+
+/**
+ * @summary Get outcome-based performance of recorded radar signals
+ */
+export const getRadarPerformance = async ( options?: Parameters<typeof customFetch>[1]): Promise<RadarPerformanceResponse> => {
+
+  return customFetch<RadarPerformanceResponse>(getGetRadarPerformanceUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetRadarPerformanceQueryKey = () => {
+    return [
+    `/api/radar/performance`
+    ] as const;
+    }
+
+
+export const getGetRadarPerformanceQueryOptions = <TData = Awaited<ReturnType<typeof getRadarPerformance>>, TError = ErrorType<ApiError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRadarPerformance>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRadarPerformanceQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRadarPerformance>>> = ({ signal }) => getRadarPerformance({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRadarPerformance>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRadarPerformanceQueryResult = NonNullable<Awaited<ReturnType<typeof getRadarPerformance>>>
+export type GetRadarPerformanceQueryError = ErrorType<ApiError>
+
+
+export function useGetRadarPerformance<TData = Awaited<ReturnType<typeof getRadarPerformance>>, TError = ErrorType<ApiError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRadarPerformance>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRadarPerformance>>,
+          TError,
+          Awaited<ReturnType<typeof getRadarPerformance>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRadarPerformance<TData = Awaited<ReturnType<typeof getRadarPerformance>>, TError = ErrorType<ApiError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRadarPerformance>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRadarPerformance>>,
+          TError,
+          Awaited<ReturnType<typeof getRadarPerformance>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRadarPerformance<TData = Awaited<ReturnType<typeof getRadarPerformance>>, TError = ErrorType<ApiError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRadarPerformance>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get outcome-based performance of recorded radar signals
+ */
+
+export function useGetRadarPerformance<TData = Awaited<ReturnType<typeof getRadarPerformance>>, TError = ErrorType<ApiError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRadarPerformance>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRadarPerformanceQueryOptions(options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

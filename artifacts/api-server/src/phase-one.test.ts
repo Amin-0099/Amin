@@ -12,14 +12,18 @@ const databaseIntegrationEnabled = process.env.PHASE2_DATABASE_TEST === "1";
 
 const [
   { default: apiRouter },
-  { analyzeMarketSnapshot, buildFinalReport },
-  { computeRadarScore, getMarketSnapshot, getRadarAssets, parseCandles },
-  { calculatePaperPerformance, calculateTradePnl, hasActionablePaperSignal },
+  { analyzeMarketSnapshot, buildFinalReport, verifyResults },
+  { computeRadarScore, getMarketSnapshot, getRadarAssets, haveContinuousCandles, parseCandles },
+  { calculatePaperPerformance, calculateTradePnl, getPaperPriceDataStatus, hasActionablePaperSignal },
+  { calculateMomentumIndicators, calculateTechnicalIndicators, relativeStrengthIndex },
+  { calculateRadarErrorSources, calculateRadarPerformance },
 ] = await Promise.all([
     import("./routes"),
     import("./lib/analysis-engine"),
     import("./lib/market-data"),
     import("./lib/paper-service"),
+    import("./lib/technical-analysis"),
+    import("./lib/radar-evaluation"),
   ]);
 
 const app = express();
@@ -284,6 +288,167 @@ test("candle parser rejects nulls and inconsistent OHLC values", () => {
   ]), []);
 });
 
+test("candle parser sorts rows and deduplicates repeated open timestamps", () => {
+  const rows = makeKlineRows(3, 60_000);
+  const parsed = parseCandles([rows[2], rows[0], rows[0], rows[1]]);
+  assert.equal(parsed.length, 3);
+  assert.deepEqual(parsed.map((candle) => candle.openTime), [
+    parsed[0].openTime,
+    parsed[1].openTime,
+    parsed[2].openTime,
+  ]);
+  assert.ok(parsed[0].openTime < parsed[1].openTime);
+  assert.ok(parsed[1].openTime < parsed[2].openTime);
+});
+
+test("candle continuity rejects gaps and malformed period boundaries", () => {
+  const candles = parseCandles(makeKlineRows(4, 60 * 60 * 1_000));
+  assert.equal(haveContinuousCandles(candles, "1h"), true);
+  assert.equal(haveContinuousCandles([candles[0], candles[2], candles[3]], "1h"), false);
+  assert.equal(
+    haveContinuousCandles([{ ...candles[0], closeTime: candles[0].openTime + 60 * 60 * 1_000 }], "1h"),
+    false,
+  );
+  assert.equal(haveContinuousCandles(candles, "1d"), false);
+});
+
+test("technical indicators use raw candle series and handle insufficient or flat data", () => {
+  const rising = parseCandles(makeKlineRows(220, 24 * 60 * 60 * 1_000));
+  const indicators = calculateTechnicalIndicators(rising);
+  assert.ok(indicators.ema20 !== null);
+  assert.ok(indicators.ema50 !== null);
+  assert.ok(indicators.ema200 !== null);
+  assert.ok(indicators.sma20 !== null);
+  assert.ok(indicators.sma50 !== null);
+  assert.ok(indicators.rsi14 !== null && indicators.rsi14 > 99);
+  assert.ok(indicators.macd !== null);
+  assert.ok(indicators.macdSignal !== null);
+  assert.ok(indicators.macdHistogram !== null);
+  assert.ok(indicators.atr14 !== null && indicators.atr14 > 0);
+  assert.ok(indicators.support20 !== null && indicators.resistance20 !== null);
+  assert.equal(indicators.trend, "bullish");
+  assert.equal(calculateTechnicalIndicators([]).rsi14, null);
+  assert.equal(relativeStrengthIndex(Array(30).fill(100)), 50);
+  assert.equal(relativeStrengthIndex([1, 2, 3], 14), null);
+});
+
+test("momentum rating combines price, volume, trend, and volatility from candles", () => {
+  const rising = parseCandles(makeKlineRows(60, 60 * 60 * 1_000, 30));
+  const falling = parseCandles(makeKlineRows(60, 60 * 60 * 1_000, 30, 200, -0.2));
+  const bullish = calculateMomentumIndicators(rising);
+  const bearish = calculateMomentumIndicators(falling);
+  assert.ok(bullish.rating !== null && bullish.rating > 65);
+  assert.ok(bullish.volumeChangePercent !== null && bullish.volumeChangePercent > 0);
+  assert.equal(bullish.trend, "bullish");
+  assert.ok(bearish.rating !== null && bearish.rating < 50);
+  assert.equal(bearish.trend, "bearish");
+  assert.equal(calculateMomentumIndicators(rising.slice(0, 24)).rating, null);
+});
+
+test("verification detects evidence values that cannot be reproduced from candles", () => {
+  const checkedAt = new Date().toISOString();
+  const candles = parseCandles(makeKlineRows(220, 24 * 60 * 60 * 1_000));
+  const missingSource = {
+    source: "Binance · 1d candles",
+    status: "live",
+    checkedAt,
+    observedAt: new Date(candles.at(-1)!.closeTime).toISOString(),
+    ageMinutes: 0,
+    detail: "Test candle source.",
+  } as const;
+  const snapshot = {
+    asset: "BTC",
+    generatedAt: checkedAt,
+    priceEur: null,
+    priceEurObserved: null,
+    priceUsd: null,
+    change24hPercent: null,
+    change7dPercent: null,
+    volume24hEur: null,
+    marketCapEur: null,
+    sourceStatuses: [missingSource],
+    hourlyCandles: [],
+    dailyCandles: candles,
+    hourlyStatus: { ...missingSource, source: "Binance · 1h candles", status: "missing" as const, observedAt: null },
+    dailyStatus: missingSource,
+    sourceDeviationPercent: null,
+  } satisfies MarketSnapshot;
+  const original = analyzeMarketSnapshot(snapshot).agentResults;
+  const corrupted = original.map((result) =>
+    result.agentId === "technical-analyst"
+      ? {
+          ...result,
+          evidence: result.evidence.map((item) =>
+            item.metric === "EMA 20" ? { ...item, value: "999999.00" } : item,
+          ),
+        }
+      : result,
+  );
+  const verification = verifyResults(corrupted, snapshot);
+  assert.ok(verification.risks.some((risk) => risk.includes("EMA 20") && risk.includes("Rohdaten-Snapshot")));
+  assert.ok(verification.confidence < 100);
+});
+
+test("radar evaluation reports measured performance by asset, signal, and horizon", () => {
+  const performance = calculateRadarPerformance([
+    { asset: "BTC", signalType: "long", stance: "bullish", horizonHours: 24, returnPercent: 2, directionCorrect: true },
+    { asset: "BTC", signalType: "long", stance: "bullish", horizonHours: 24, returnPercent: -1, directionCorrect: false },
+    { asset: "ETH", signalType: "neutral_wait", stance: "neutral", horizonHours: 24, returnPercent: 0.5, directionCorrect: null },
+  ]);
+  assert.deepEqual(performance, [
+    {
+      asset: "BTC",
+      signalType: "long",
+      stance: "bullish",
+      horizonHours: 24,
+      sampleCount: 2,
+      directionalSampleCount: 2,
+      hits: 1,
+      hitRatePercent: 50,
+      averageReturnPercent: 0.5,
+    },
+    {
+      asset: "ETH",
+      signalType: "neutral_wait",
+      stance: "neutral",
+      horizonHours: 24,
+      sampleCount: 1,
+      directionalSampleCount: 0,
+      hits: 0,
+      hitRatePercent: null,
+      averageReturnPercent: 0.5,
+    },
+  ]);
+});
+
+test("radar evaluation classifies stored data and signal errors", () => {
+  const errors = calculateRadarErrorSources([
+    {
+      currentData: {
+        sourceStatuses: [{ status: "missing" }, { status: "stale" }],
+        sourceDeviationPercent: 1.5,
+      },
+      counterArguments: ["Evidence does not match the Rohdaten-Snapshot."],
+      confidenceBreakdown: { contradictionCount: 1 },
+    },
+    {
+      currentData: {
+        sourceStatuses: [{ status: "stale" }],
+        sourceDeviationPercent: 0.1,
+      },
+      counterArguments: [],
+      confidenceBreakdown: { contradictionCount: 0 },
+    },
+  ]);
+  assert.deepEqual(errors, [
+    { category: "missing_data", signalCount: 1 },
+    { category: "signal_conflict", signalCount: 1 },
+    { category: "source_disagreement", signalCount: 1 },
+    { category: "stale_data", signalCount: 2 },
+    { category: "verification_mismatch", signalCount: 1 },
+  ]);
+});
+
 test("market data stays missing when providers return no records", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
@@ -377,7 +542,7 @@ test("radar route returns source-backed analysis signals and missing assets", as
         symbol: string;
         dataStatus: string;
         priceEur: number | null;
-        signal: { decision: string; riskScore: number | null; scoreFactors: unknown[] } | null;
+        signal: { decision: string; radarState: string; riskScore: number | null; scoreFactors: unknown[] } | null;
       }>;
     };
     const bitcoin = result.assets.find((asset) => asset.symbol === "BTC");
@@ -385,7 +550,8 @@ test("radar route returns source-backed analysis signals and missing assets", as
     assert.ok(bitcoin);
     assert.equal(bitcoin.dataStatus, "missing");
     assert.equal(bitcoin.priceEur, null);
-    assert.equal(bitcoin.signal, null);
+    assert.ok(bitcoin.signal);
+    assert.equal(bitcoin.signal.radarState, "stand_aside");
     assert.ok(ethereum?.signal);
     assert.ok(["long", "strong_long"].includes(ethereum.signal.decision));
     assert.ok(ethereum.signal.riskScore !== null);
@@ -441,14 +607,27 @@ test("analysis engine does not create a directional result without live evidence
     ema20: null,
     ema50: null,
     ema200: null,
+    sma20: null,
+    sma50: null,
     rsi14: null,
+    macd: null,
+    macdSignal: null,
+    macdHistogram: null,
     atr14: null,
     atrPercent: null,
+    volatility20Percent: null,
+    support20: null,
+    resistance20: null,
+    trend: "not_evaluable",
     breakout: null,
   };
   const momentum: Parameters<typeof buildFinalReport>[4] = {
     change6h: null,
     change24h: null,
+    volumeChangePercent: null,
+    volatilityPercent: null,
+    rating: null,
+    trend: "not_evaluable",
     output: {
       agentId: "momentum-scanner",
       displayName: "Momentum Scanner",
@@ -471,7 +650,10 @@ test("analysis engine does not create a directional result without live evidence
 
   const report = buildFinalReport([], snapshot, weights, indicators, momentum, null);
   assert.equal(report.decision, "no_clear_signal");
+  assert.equal(report.stance, "not_evaluable");
+  assert.equal(report.radarState, "stand_aside");
   assert.equal(report.confidenceScore, 0);
+  assert.equal(report.dataStatus, "missing");
   assert.equal(report.riskScore, null);
   assert.equal(report.longScore, null);
   assert.equal(report.shortScore, null);
@@ -483,13 +665,41 @@ test("paper-trading P&L is simulated and symmetric for long and short positions"
   assert.equal(calculateTradePnl("short", 2, 100, 90), 20);
 });
 
+test("paper price status never labels stale quotes as live", () => {
+  const liveSource = {
+    source: "CoinGecko · EUR",
+    status: "live",
+    checkedAt: new Date().toISOString(),
+    observedAt: new Date().toISOString(),
+    ageMinutes: 0,
+    detail: "Fresh quote.",
+  } as const;
+  const staleSource = { ...liveSource, status: "stale" } as const;
+  assert.equal(getPaperPriceDataStatus({
+    sourceStatuses: [liveSource],
+    priceEur: 100,
+    priceEurObserved: 100,
+  }), "live");
+  assert.equal(getPaperPriceDataStatus({
+    sourceStatuses: [staleSource],
+    priceEur: 100,
+    priceEurObserved: 100,
+  }), "stale");
+  assert.equal(getPaperPriceDataStatus(undefined), "missing");
+});
+
 test("paper trades require a matching directional report and two live evidence agents", () => {
   const report = {
     decision: "long",
+    dataStatus: "live",
     confidenceBreakdown: {
       coverageScore: 50,
+      freshnessScore: 50,
       agreementScore: 100,
       sourceConsistencyScore: 100,
+      verificationScore: 100,
+      confirmationCount: 2,
+      contradictionCount: 0,
       liveAgentCount: 2,
       totalAgentCount: 10,
       liveSourceCount: 2,
@@ -508,6 +718,11 @@ test("paper trades require a matching directional report and two live evidence a
   assert.equal(hasActionablePaperSignal("long", report, bullishAgents), true);
   assert.equal(hasActionablePaperSignal("short", report, bullishAgents), false);
   assert.equal(hasActionablePaperSignal("long", { ...report, decision: "no_clear_signal" }, bullishAgents), false);
+  assert.equal(hasActionablePaperSignal("long", { ...report, dataStatus: "stale" }, bullishAgents), false);
+  assert.equal(hasActionablePaperSignal("long", {
+    ...report,
+    confidenceBreakdown: { ...report.confidenceBreakdown, verificationScore: 50 },
+  }, bullishAgents), false);
   assert.equal(hasActionablePaperSignal("long", report, bullishAgents.slice(0, 1)), false);
   assert.equal(hasActionablePaperSignal("long", report, bullishAgents.map((agent) => ({ ...agent, dataStatus: "stale" }))), false);
 });

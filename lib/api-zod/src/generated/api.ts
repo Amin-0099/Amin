@@ -120,6 +120,37 @@ export const GetAnalysisRunResponse = zod.object({
   "kind": zod.enum(['info', 'working', 'complete', 'error'])
 })),
   "finalReport": zod.union([zod.object({
+  "stance": zod.enum(['bullish', 'bearish', 'neutral', 'not_evaluable']),
+  "radarState": zod.enum(['stand_aside', 'observe', 'attractive_risk_reward']),
+  "generatedAt": zod.string().datetime({"offset":true}),
+  "dataStatus": zod.enum(['live', 'stale', 'missing']),
+  "currentData": zod.object({
+  "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
+  "priceEur": zod.number().nullable(),
+  "priceUsd": zod.number().nullable(),
+  "change24hPercent": zod.number().nullable(),
+  "change7dPercent": zod.number().nullable(),
+  "volume24hEur": zod.number().nullable(),
+  "marketCapEur": zod.number().nullable(),
+  "sourceDeviationPercent": zod.number().nullable(),
+  "hourlyCandleAt": zod.string().datetime({"offset":true}).nullable(),
+  "dailyCandleAt": zod.string().datetime({"offset":true}).nullable(),
+  "sourceStatuses": zod.array(zod.object({
+  "source": zod.string(),
+  "status": zod.enum(['live', 'stale', 'missing']),
+  "checkedAt": zod.string().datetime({"offset":true}),
+  "observedAt": zod.string().datetime({"offset":true}).nullable(),
+  "ageMinutes": zod.number().nullable(),
+  "detail": zod.string()
+}))
+}),
+  "evidence": zod.array(zod.object({
+  "metric": zod.string(),
+  "value": zod.string(),
+  "source": zod.string(),
+  "timestamp": zod.string().datetime({"offset":true}),
+  "dataStatus": zod.enum(['live', 'stale', 'missing'])
+})),
   "decision": zod.enum(['strong_long', 'long', 'neutral_wait', 'short', 'strong_short', 'no_clear_signal']),
   "summary": zod.string(),
   "confidenceScore": zod.number().int().min(getAnalysisRunResponseFinalReportOneConfidenceScoreMin).max(getAnalysisRunResponseFinalReportOneConfidenceScoreMax),
@@ -139,8 +170,12 @@ export const GetAnalysisRunResponse = zod.object({
 })),
   "confidenceBreakdown": zod.object({
   "coverageScore": zod.number().int(),
+  "freshnessScore": zod.number().int(),
   "agreementScore": zod.number().int(),
   "sourceConsistencyScore": zod.number().int(),
+  "verificationScore": zod.number().int(),
+  "confirmationCount": zod.number().int(),
+  "contradictionCount": zod.number().int(),
   "liveAgentCount": zod.number().int(),
   "totalAgentCount": zod.number().int(),
   "liveSourceCount": zod.number().int(),
@@ -205,6 +240,7 @@ export const getRadarResponseAssetsItemSignalOneRiskScoreMax = 100;
 
 export const GetRadarResponse = zod.object({
   "generatedAt": zod.string().datetime({"offset":true}),
+  "learningStatus": zod.enum(['saved', 'unavailable']),
   "assets": zod.array(zod.object({
   "symbol": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
   "name": zod.string(),
@@ -224,7 +260,39 @@ export const GetRadarResponse = zod.object({
   "detail": zod.string()
 })),
   "radarScore": zod.number().nullable(),
+  "momentumRating": zod.number().nullable(),
   "signal": zod.union([zod.object({
+  "stance": zod.enum(['bullish', 'bearish', 'neutral', 'not_evaluable']),
+  "radarState": zod.enum(['stand_aside', 'observe', 'attractive_risk_reward']),
+  "generatedAt": zod.string().datetime({"offset":true}),
+  "dataStatus": zod.enum(['live', 'stale', 'missing']),
+  "currentData": zod.object({
+  "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
+  "priceEur": zod.number().nullable(),
+  "priceUsd": zod.number().nullable(),
+  "change24hPercent": zod.number().nullable(),
+  "change7dPercent": zod.number().nullable(),
+  "volume24hEur": zod.number().nullable(),
+  "marketCapEur": zod.number().nullable(),
+  "sourceDeviationPercent": zod.number().nullable(),
+  "hourlyCandleAt": zod.string().datetime({"offset":true}).nullable(),
+  "dailyCandleAt": zod.string().datetime({"offset":true}).nullable(),
+  "sourceStatuses": zod.array(zod.object({
+  "source": zod.string(),
+  "status": zod.enum(['live', 'stale', 'missing']),
+  "checkedAt": zod.string().datetime({"offset":true}),
+  "observedAt": zod.string().datetime({"offset":true}).nullable(),
+  "ageMinutes": zod.number().nullable(),
+  "detail": zod.string()
+}))
+}),
+  "evidence": zod.array(zod.object({
+  "metric": zod.string(),
+  "value": zod.string(),
+  "source": zod.string(),
+  "timestamp": zod.string().datetime({"offset":true}),
+  "dataStatus": zod.enum(['live', 'stale', 'missing'])
+})),
   "decision": zod.enum(['strong_long', 'long', 'neutral_wait', 'short', 'strong_short', 'no_clear_signal']),
   "summary": zod.string(),
   "confidenceScore": zod.number().int().min(getRadarResponseAssetsItemSignalOneConfidenceScoreMin).max(getRadarResponseAssetsItemSignalOneConfidenceScoreMax),
@@ -244,8 +312,12 @@ export const GetRadarResponse = zod.object({
 })),
   "confidenceBreakdown": zod.object({
   "coverageScore": zod.number().int(),
+  "freshnessScore": zod.number().int(),
   "agreementScore": zod.number().int(),
   "sourceConsistencyScore": zod.number().int(),
+  "verificationScore": zod.number().int(),
+  "confirmationCount": zod.number().int(),
+  "contradictionCount": zod.number().int(),
   "liveAgentCount": zod.number().int(),
   "totalAgentCount": zod.number().int(),
   "liveSourceCount": zod.number().int(),
@@ -254,6 +326,38 @@ export const GetRadarResponse = zod.object({
 })
 }),zod.null()]),
   "sparkline": zod.array(zod.number())
+}))
+})
+
+
+/**
+ * @summary Get outcome-based performance of recorded radar signals
+ */
+export const getRadarPerformanceResponsePerformanceItemSampleCountMin = 0;
+
+export const getRadarPerformanceResponsePerformanceItemDirectionalSampleCountMin = 0;
+
+export const getRadarPerformanceResponsePerformanceItemHitsMin = 0;
+
+export const getRadarPerformanceResponseErrorSourcesItemSignalCountMin = 0;
+
+
+
+export const GetRadarPerformanceResponse = zod.object({
+  "performance": zod.array(zod.object({
+  "asset": zod.enum(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'LTC', 'COIN', 'MSTR', 'NVDA', 'ASML', 'TSM', 'AAPL', 'MSFT', 'DAX', 'XAU', 'OIL']),
+  "signalType": zod.string(),
+  "stance": zod.enum(['bullish', 'bearish', 'neutral', 'not_evaluable']),
+  "horizonHours": zod.union([zod.literal(1),zod.literal(24),zod.literal(168)]),
+  "sampleCount": zod.number().int().min(getRadarPerformanceResponsePerformanceItemSampleCountMin),
+  "directionalSampleCount": zod.number().int().min(getRadarPerformanceResponsePerformanceItemDirectionalSampleCountMin),
+  "hits": zod.number().int().min(getRadarPerformanceResponsePerformanceItemHitsMin),
+  "hitRatePercent": zod.number().nullable(),
+  "averageReturnPercent": zod.number()
+})),
+  "errorSources": zod.array(zod.object({
+  "category": zod.enum(['missing_data', 'stale_data', 'source_disagreement', 'verification_mismatch', 'signal_conflict']),
+  "signalCount": zod.number().int().min(getRadarPerformanceResponseErrorSourcesItemSignalCountMin)
 }))
 })
 

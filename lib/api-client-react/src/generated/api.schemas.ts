@@ -180,8 +180,12 @@ export interface RunEvent {
 
 export interface ConfidenceBreakdown {
   coverageScore: number;
+  freshnessScore: number;
   agreementScore: number;
   sourceConsistencyScore: number;
+  verificationScore: number;
+  confirmationCount: number;
+  contradictionCount: number;
   liveAgentCount: number;
   totalAgentCount: number;
   liveSourceCount: number;
@@ -198,6 +202,48 @@ export interface ScoreFactor {
   explanation: string;
 }
 
+export interface MarketCurrentData {
+  asset: AssetCode;
+  /** @nullable */
+  priceEur: number | null;
+  /** @nullable */
+  priceUsd: number | null;
+  /** @nullable */
+  change24hPercent: number | null;
+  /** @nullable */
+  change7dPercent: number | null;
+  /** @nullable */
+  volume24hEur: number | null;
+  /** @nullable */
+  marketCapEur: number | null;
+  /** @nullable */
+  sourceDeviationPercent: number | null;
+  /** @nullable */
+  hourlyCandleAt: string | null;
+  /** @nullable */
+  dailyCandleAt: string | null;
+  sourceStatuses: DataSourceStatus[];
+}
+
+export type FinalReportStance = typeof FinalReportStance[keyof typeof FinalReportStance];
+
+
+export const FinalReportStance = {
+  bullish: 'bullish',
+  bearish: 'bearish',
+  neutral: 'neutral',
+  not_evaluable: 'not_evaluable',
+} as const;
+
+export type FinalReportRadarState = typeof FinalReportRadarState[keyof typeof FinalReportRadarState];
+
+
+export const FinalReportRadarState = {
+  stand_aside: 'stand_aside',
+  observe: 'observe',
+  attractive_risk_reward: 'attractive_risk_reward',
+} as const;
+
 export type FinalReportDecision = typeof FinalReportDecision[keyof typeof FinalReportDecision];
 
 
@@ -211,6 +257,12 @@ export const FinalReportDecision = {
 } as const;
 
 export interface FinalReport {
+  stance: FinalReportStance;
+  radarState: FinalReportRadarState;
+  generatedAt: string;
+  dataStatus: DataStatus;
+  currentData: MarketCurrentData;
+  evidence: AgentEvidence[];
   decision: FinalReportDecision;
   summary: string;
   /**
@@ -299,13 +351,81 @@ export interface MarketAsset {
   sourceStatuses: DataSourceStatus[];
   /** @nullable */
   radarScore: number | null;
+  /** @nullable */
+  momentumRating: number | null;
   signal: FinalReport | null;
   sparkline: number[];
 }
 
+export type RadarResponseLearningStatus = typeof RadarResponseLearningStatus[keyof typeof RadarResponseLearningStatus];
+
+
+export const RadarResponseLearningStatus = {
+  saved: 'saved',
+  unavailable: 'unavailable',
+} as const;
+
 export interface RadarResponse {
   generatedAt: string;
+  learningStatus: RadarResponseLearningStatus;
   assets: MarketAsset[];
+}
+
+export type RadarPerformanceItemStance = typeof RadarPerformanceItemStance[keyof typeof RadarPerformanceItemStance];
+
+
+export const RadarPerformanceItemStance = {
+  bullish: 'bullish',
+  bearish: 'bearish',
+  neutral: 'neutral',
+  not_evaluable: 'not_evaluable',
+} as const;
+
+export type RadarPerformanceItemHorizonHours = typeof RadarPerformanceItemHorizonHours[keyof typeof RadarPerformanceItemHorizonHours];
+
+
+export const RadarPerformanceItemHorizonHours = {
+  NUMBER_1: 1,
+  NUMBER_24: 24,
+  NUMBER_168: 168,
+} as const;
+
+export interface RadarPerformanceItem {
+  asset: AssetCode;
+  signalType: string;
+  stance: RadarPerformanceItemStance;
+  horizonHours: RadarPerformanceItemHorizonHours;
+  /** @minimum 0 */
+  sampleCount: number;
+  /** @minimum 0 */
+  directionalSampleCount: number;
+  /** @minimum 0 */
+  hits: number;
+  /** @nullable */
+  hitRatePercent: number | null;
+  averageReturnPercent: number;
+}
+
+export type RadarErrorSourceCategory = typeof RadarErrorSourceCategory[keyof typeof RadarErrorSourceCategory];
+
+
+export const RadarErrorSourceCategory = {
+  missing_data: 'missing_data',
+  stale_data: 'stale_data',
+  source_disagreement: 'source_disagreement',
+  verification_mismatch: 'verification_mismatch',
+  signal_conflict: 'signal_conflict',
+} as const;
+
+export interface RadarErrorSource {
+  category: RadarErrorSourceCategory;
+  /** @minimum 0 */
+  signalCount: number;
+}
+
+export interface RadarPerformanceResponse {
+  performance: RadarPerformanceItem[];
+  errorSources: RadarErrorSource[];
 }
 
 export type PaperPositionSide = typeof PaperPositionSide[keyof typeof PaperPositionSide];

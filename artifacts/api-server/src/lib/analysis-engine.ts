@@ -19,6 +19,12 @@ import {
 import { DEFAULT_SCORE_WEIGHTS, getDeskSettings } from "./account-settings";
 import { generateGeminiContent, GeminiServiceError } from "./gemini";
 import { getMarketSnapshot, type Candle, type MarketSnapshot } from "./market-data";
+import {
+  calculateMomentumIndicators,
+  calculateTechnicalIndicators,
+  type MomentumIndicators,
+  type TechnicalIndicators,
+} from "./technical-analysis";
 
 type AgentDefinition = { id: string; displayName: string };
 
@@ -80,7 +86,7 @@ function missingSource(source: string, detail: string): DataSourceStatus {
 }
 
 function aggregateDataStatus(sources: DataSourceStatus[]): "live" | "stale" | "missing" {
-  if (sources.some((source) => source.status === "live")) return "live";
+  if (sources.length > 0 && sources.every((source) => source.status === "live")) return "live";
   if (sources.some((source) => source.status === "stale")) return "stale";
   return "missing";
 }
@@ -135,130 +141,106 @@ function pct(value: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
+function standardDeviation(values: number[]): number | null {
+  if (values.length < 2 || values.some((value) => !Number.isFinite(value))) return null;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return Math.sqrt(
+    values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1),
+  );
+}
+
 function evidenceTimestamp(status: DataSourceStatus, fallback: string): string {
   return status.observedAt ?? fallback;
 }
 
-function ema(values: number[], period: number): number | null {
-  if (values.length < period) return null;
-  const seed = values.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
-  const multiplier = 2 / (period + 1);
-  return values.slice(period).reduce((previous, value) => value * multiplier + previous * (1 - multiplier), seed);
-}
-
-function rsi(values: number[], period = 14): number | null {
-  if (values.length <= period) return null;
-  const changes = values.slice(-period - 1).slice(1).map((value, index) => value - values.slice(-period - 1)[index]);
-  const gains = changes.map((change) => Math.max(change, 0));
-  const losses = changes.map((change) => Math.max(-change, 0));
-  const averageGain = gains.reduce((sum, value) => sum + value, 0) / period;
-  const averageLoss = losses.reduce((sum, value) => sum + value, 0) / period;
-  if (averageLoss === 0) return 100;
-  return 100 - 100 / (1 + averageGain / averageLoss);
-}
-
-function atr(candles: Candle[], period = 14): number | null {
-  if (candles.length <= period) return null;
-  const sample = candles.slice(-period - 1);
-  const trueRanges = sample.slice(1).map((candle, index) => {
-    const previousClose = sample[index].close;
-    return Math.max(
-      candle.high - candle.low,
-      Math.abs(candle.high - previousClose),
-      Math.abs(candle.low - previousClose),
-    );
-  });
-  return trueRanges.reduce((sum, value) => sum + value, 0) / trueRanges.length;
-}
-
-function stdev(values: number[]): number | null {
-  if (values.length < 2) return null;
-  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-  return Math.sqrt(values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1));
-}
-
 function calculateTechnical(snapshot: MarketSnapshot): {
   output: AgentResult;
-  indicators: {
-    close: number | null;
-    ema20: number | null;
-    ema50: number | null;
-    ema200: number | null;
-    rsi14: number | null;
-    atr14: number | null;
-    atrPercent: number | null;
-    breakout: "above" | "below" | "inside" | null;
-  };
+  indicators: TechnicalIndicators;
 } {
   const candles = snapshot.dailyCandles;
-  const closes = candles.map((candle) => candle.close);
-  const last = candles.at(-1);
-  const close = last?.close ?? null;
-  const ema20 = ema(closes.slice(-Math.max(20, closes.length)), 20);
-  const ema50 = ema(closes.slice(-Math.max(50, closes.length)), 50);
-  const ema200 = ema(closes, 200);
-  const rsi14 = rsi(closes);
-  const atr14 = atr(candles);
-  const atrPercent = close && atr14 ? (atr14 / close) * 100 : null;
-  const previous20 = candles.slice(-21, -1);
-  const high20 = previous20.length === 20 ? Math.max(...previous20.map((candle) => candle.high)) : null;
-  const low20 = previous20.length === 20 ? Math.min(...previous20.map((candle) => candle.low)) : null;
-  const breakout =
-    close !== null && high20 !== null && low20 !== null
-      ? close > high20
-        ? "above"
-        : close < low20
-          ? "below"
-          : "inside"
-      : null;
+  const indicators = calculateTechnicalIndicators(candles);
+  const {
+    close, ema20, ema50, ema200, sma20, sma50, rsi14, macd, macdSignal,
+    macdHistogram, atr14, atrPercent, volatility20Percent, support20,
+    resistance20, trend, breakout,
+  } = indicators;
   const adequate = close !== null && ema20 !== null && ema50 !== null && rsi14 !== null && atr14 !== null;
-  const fullyAligned = ema200 !== null && close! > ema20! && ema20! > ema50! && ema50! > ema200;
-  const fullyDown = ema200 !== null && close! < ema20! && ema20! < ema50! && ema50! < ema200;
-  const stance = !adequate
-    ? "not_evaluable"
-    : fullyAligned && rsi14! < 70
-      ? "bullish"
-      : fullyDown && rsi14! > 30
-        ? "bearish"
-        : "neutral";
   const sourceStatus = snapshot.dailyStatus;
-  const evidence = adequate
-    ? [
-        makeEvidence("Daily close", money(close!), sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status),
-        makeEvidence("EMA 20", money(ema20!), sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status),
-        makeEvidence("EMA 50", money(ema50!), sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status),
-        ...(ema200 === null ? [] : [makeEvidence("EMA 200", money(ema200), sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status)]),
-        makeEvidence("RSI 14", rsi14!.toFixed(1), sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status),
-        makeEvidence("ATR 14", money(atr14!), sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status),
-      ]
-    : [];
-  const strength = adequate
-    ? Math.min(
-        90,
-        Math.round(
-          25 +
-            Math.abs(((close! - ema50!) / ema50!) * 100) * 2 +
-            Math.abs(rsi14! - 50) * 0.3 +
-            (ema200 === null ? 0 : 10),
-        ),
-      )
-    : 0;
+  const stance = !adequate || sourceStatus.status !== "live"
+    ? "not_evaluable"
+      : trend === "bullish" && macdHistogram !== null && macdHistogram > 0 && rsi14 < 70
+        ? "bullish"
+        : trend === "bearish" && macdHistogram !== null && macdHistogram < 0 && rsi14 > 30
+          ? "bearish"
+          : "neutral";
+  const measured: Array<[string, number | null, number]> = [
+    ["Daily close", close, 2],
+    ["EMA 20", ema20, 2],
+    ["EMA 50", ema50, 2],
+    ["EMA 200", ema200, 2],
+    ["SMA 20", sma20, 2],
+    ["SMA 50", sma50, 2],
+    ["RSI 14", rsi14, 2],
+    ["MACD line", macd, 6],
+    ["MACD signal", macdSignal, 6],
+    ["MACD histogram", macdHistogram, 6],
+    ["ATR 14", atr14, 6],
+    ["ATR 14 percent", atrPercent, 4],
+    ["Realized volatility 20d", volatility20Percent, 4],
+    ["20d support", support20, 2],
+    ["20d resistance", resistance20, 2],
+  ];
+  const evidence = measured.flatMap(([metric, value, precision]) =>
+    value === null
+      ? []
+      : [makeEvidence(
+          metric,
+          value.toFixed(precision),
+          sourceStatus.source,
+          evidenceTimestamp(sourceStatus, snapshot.generatedAt),
+          sourceStatus.status,
+        )],
+  );
+  if (trend !== "not_evaluable") {
+    evidence.push(makeEvidence(
+      "Trend",
+      trend,
+      sourceStatus.source,
+      evidenceTimestamp(sourceStatus, snapshot.generatedAt),
+      sourceStatus.status,
+    ));
+  }
+  if (breakout !== null) {
+    evidence.push(makeEvidence(
+      "20d breakout",
+      breakout,
+      sourceStatus.source,
+      evidenceTimestamp(sourceStatus, snapshot.generatedAt),
+      sourceStatus.status,
+    ));
+  }
+  const availableIndicators = measured.filter(([, value]) => value !== null).length;
+  const indicatorCoverage = Math.round((availableIndicators / measured.length) * 100);
   const output = baseResult("technical-analyst", {
     stance,
-    summary: adequate
-      ? `${snapshot.asset} daily indicators: close ${money(close!)}, EMA20 ${money(ema20!)}, EMA50 ${money(ema50!)}, RSI14 ${rsi14!.toFixed(1)}.`
-      : "Nicht bewertbar: Für EMA, RSI und ATR liegen nicht genügend echte Tageskerzen vor.",
-    confidence: sourceStatus.status === "live" ? strength : Math.round(strength * 0.5),
+    summary: !adequate
+      ? "Nicht bewertbar: Für EMA, RSI und ATR liegen nicht genügend echte Tageskerzen vor."
+      : sourceStatus.status !== "live"
+        ? `Technische Kennzahlen berechnet, aber die Tageskerzen sind ${sourceStatus.status}; keine Richtungsbewertung.`
+        : `${snapshot.asset} Tagestrend ${trend}; EMA20 ${money(ema20)}, EMA50 ${money(ema50)}, RSI14 ${rsi14.toFixed(1)}; MACD-Histogramm ${macdHistogram?.toFixed(6) ?? "nicht verfügbar"}.`,
+    confidence: sourceStatus.status === "live" ? indicatorCoverage : 0,
     bullishFactors: adequate
       ? [
           ...(close! > ema20! ? [`Kurs liegt über EMA 20 (${money(ema20!)})`] : []),
           ...(ema200 !== null && close! > ema200 ? [`Kurs liegt über EMA 200 (${money(ema200)})`] : []),
+          ...(macdHistogram !== null && macdHistogram > 0 ? ["MACD-Histogramm positiv"] : []),
         ]
       : [],
     bearishFactors: adequate
       ? [
           ...(close! < ema20! ? [`Kurs liegt unter EMA 20 (${money(ema20!)})`] : []),
           ...(ema200 !== null && close! < ema200 ? [`Kurs liegt unter EMA 200 (${money(ema200)})`] : []),
+          ...(macdHistogram !== null && macdHistogram < 0 ? ["MACD-Histogramm negativ"] : []),
         ]
       : [],
     risks: adequate
@@ -266,69 +248,91 @@ function calculateTechnical(snapshot: MarketSnapshot): {
           ...(rsi14! >= 70 ? [`RSI 14 liegt bei ${rsi14!.toFixed(1)} (überkauft)`] : []),
           ...(rsi14! <= 30 ? [`RSI 14 liegt bei ${rsi14!.toFixed(1)} (überverkauft)`] : []),
           ...(ema200 === null ? ["Für EMA 200 sind weniger als 200 Tageskerzen vorhanden."] : []),
+          ...(support20 === null || resistance20 === null ? ["Für 20-Tage-Unterstützung/Widerstand fehlen ausreichend Kerzen."] : []),
+          ...(sourceStatus.status !== "live" ? [`Tageskerzen sind ${sourceStatus.status}; keine aktuelle Richtungsbewertung.`] : []),
         ]
       : ["Tageskerzen fehlen oder sind nicht frisch genug."],
     rationale: adequate
-      ? "Deterministische technische Auswertung der zuletzt abgerufenen abgeschlossenen Binance-Tageskerzen."
+      ? "EMA/SMA, RSI, MACD, ATR, Volatilität und 20-Tage-Spanne werden ausschließlich aus abgeschlossenen Binance-Tageskerzen berechnet. Confidence ist hier Kennzahlen-Abdeckung, keine Trefferwahrscheinlichkeit."
       : "Die benötigten Eingangsdaten fehlen; es wird keine Richtung abgeleitet.",
     evidence,
     source: sourceStatus.source,
     dataStatus: adequate ? sourceStatus.status : "missing",
     dataSources: [sourceStatus],
   });
-  return {
-    output,
-    indicators: { close, ema20, ema50, ema200, rsi14, atr14, atrPercent, breakout },
-  };
+  return { output, indicators };
 }
 
 function calculateMomentum(snapshot: MarketSnapshot): {
   output: AgentResult;
   change6h: number | null;
   change24h: number | null;
+  volumeChangePercent: number | null;
+  volatilityPercent: number | null;
+  rating: number | null;
+  trend: MomentumIndicators["trend"];
 } {
-  const candles = snapshot.hourlyCandles;
-  const last = candles.at(-1);
-  const sixAgo = candles.at(-7);
-  const dayAgo = candles.at(-25);
-  const change6h =
-    last && sixAgo && sixAgo.close > 0 ? ((last.close - sixAgo.close) / sixAgo.close) * 100 : null;
-  const change24h =
-    last && dayAgo && dayAgo.close > 0 ? ((last.close - dayAgo.close) / dayAgo.close) * 100 : null;
-  const adequate = change6h !== null && change24h !== null;
-  const stance =
-    !adequate
+  const indicators = calculateMomentumIndicators(snapshot.hourlyCandles);
+  const sourceStatus = snapshot.hourlyStatus;
+  const adequate = indicators.rating !== null;
+  const isLive = sourceStatus.status === "live";
+  const stance: AgentResult["stance"] =
+    !adequate || !isLive
       ? "not_evaluable"
-      : change6h! > 0.5 && change24h! > 0.5
+      : indicators.rating! >= 65
         ? "bullish"
-        : change6h! < -0.5 && change24h! < -0.5
+        : indicators.rating! <= 35
           ? "bearish"
           : "neutral";
-  const sourceStatus = snapshot.hourlyStatus;
-  const confidence = adequate
-    ? Math.min(90, Math.round(Math.abs(change6h!) * 3 + Math.abs(change24h!) * 2))
-    : 0;
+  const evidence = [
+    ["6h price change", indicators.change6h, 2],
+    ["24h price change", indicators.change24h, 2],
+    ["24h quote-volume change", indicators.volumeChangePercent, 1],
+    ["Hourly volatility 24h", indicators.volatilityPercent, 4],
+    ["Momentum rating", indicators.rating, 1],
+  ].flatMap(([metric, value, precision]) =>
+    typeof value === "number"
+      ? [makeEvidence(
+          String(metric),
+          value.toFixed(Number(precision)),
+          sourceStatus.source,
+          evidenceTimestamp(sourceStatus, snapshot.generatedAt),
+          sourceStatus.status,
+        )]
+      : [],
+  );
+  if (indicators.trend !== "not_evaluable") {
+    evidence.push(makeEvidence(
+      "Hourly trend",
+      indicators.trend,
+      sourceStatus.source,
+      evidenceTimestamp(sourceStatus, snapshot.generatedAt),
+      sourceStatus.status,
+    ));
+  }
   return {
-    change6h,
-    change24h,
+    ...indicators,
     output: baseResult("momentum-scanner", {
       stance,
-      summary: adequate
-        ? `Stündliches Momentum: ${pct(change6h!)} über 6h und ${pct(change24h!)} über 24h.`
+      summary: adequate && isLive
+        ? `Momentum-Rating ${indicators.rating}/100 aus Preisbewegung, Volumenänderung, EMA-Trend und 24h-Volatilität.`
+        : adequate
+          ? `Momentum-Daten berechnet, Stundenkerzen aber ${sourceStatus.status}; keine Richtungsbewertung.`
         : "Nicht bewertbar: Für 6h- und 24h-Momentum fehlen abgeschlossene Stundenkerzen.",
-      confidence: sourceStatus.status === "live" ? confidence : Math.round(confidence * 0.5),
-      bullishFactors: adequate && change6h! > 0 && change24h! > 0 ? [`6h ${pct(change6h!)}`, `24h ${pct(change24h!)}`] : [],
-      bearishFactors: adequate && change6h! < 0 && change24h! < 0 ? [`6h ${pct(change6h!)}`, `24h ${pct(change24h!)}`] : [],
-      risks: adequate && Math.sign(change6h!) !== Math.sign(change24h!) ? ["Kurzfristiger und 24h-Trend widersprechen sich."] : [],
+      confidence: adequate && isLive ? Math.round((evidence.length / 6) * 100) : 0,
+      bullishFactors: stance === "bullish" ? [`Momentum-Rating ${indicators.rating}/100`, `24h ${pct(indicators.change24h!)}`] : [],
+      bearishFactors: stance === "bearish" ? [`Momentum-Rating ${indicators.rating}/100`, `24h ${pct(indicators.change24h!)}`] : [],
+      risks: [
+        ...(adequate && Math.sign(indicators.change6h!) !== Math.sign(indicators.change24h!)
+          ? ["Kurzfristige und 24h-Preisbewegung widersprechen sich."]
+          : []),
+        ...(indicators.volumeChangePercent === null ? ["Vergleichbares 48h-Volumen fehlt."] : []),
+        ...(!isLive ? [`Stundenkerzen sind ${sourceStatus.status}; Rating ist keine aktuelle Richtungsaussage.`] : []),
+      ],
       rationale: adequate
-        ? "Berechnet aus den letzten abgeschlossenen Binance-Stundenkerzen."
+        ? "Rating = 35% begrenzte 6h/24h-Preisbewegung + 25% 24h-Volumenänderung + 25% EMA20/50-Trend + 15% inverse 24h-Volatilität aus 24 abgeschlossenen Stundenrenditen; alle Komponenten stammen aus Binance-Stundenkerzen."
         : "Mindestens 25 abgeschlossene Stundenkerzen werden benötigt.",
-      evidence: adequate
-        ? [
-            makeEvidence("6h price change", pct(change6h!), sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status),
-            makeEvidence("24h price change", pct(change24h!), sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status),
-          ]
-        : [],
+      evidence,
       source: sourceStatus.source,
       dataStatus: adequate ? sourceStatus.status : "missing",
       dataSources: [sourceStatus],
@@ -356,9 +360,9 @@ function calculateMarketStructure(snapshot: MarketSnapshot): AgentResult {
   const evidence = evaluable
     ? [
         makeEvidence(
-          "CoinGecko / Binance price deviation",
+          "Cross-source price deviation",
           `${deviation!.toFixed(3)}%`,
-          "CoinGecko USD vs Binance USDT",
+          "CoinGecko · USD + Binance · USDT ticker",
           [cgUsd!.observedAt, binance!.observedAt].filter(Boolean).sort().at(-1) ?? nowIso(),
           "live",
         ),
@@ -376,7 +380,7 @@ function calculateMarketStructure(snapshot: MarketSnapshot): AgentResult {
     summary: evaluable
       ? `Quellenvergleich: ${deviation!.toFixed(3)}% Preisabweichung; 24h-Veränderung ${pct(priceChange!)}.`
       : "Nicht bewertbar: CoinGecko- und Binance-Quotes müssen beide live und vergleichbar sein.",
-    confidence: evaluable ? Math.max(0, Math.round(90 - deviation! * 20)) : 0,
+    confidence: evaluable ? Math.max(0, Math.round(100 - deviation! * 10)) : 0,
     bullishFactors: stance === "bullish" ? [`24h-Veränderung ${pct(priceChange!)}`, "CoinGecko und Binance stimmen innerhalb von 1% überein."] : [],
     bearishFactors: stance === "bearish" ? [`24h-Veränderung ${pct(priceChange!)}`, "CoinGecko und Binance stimmen innerhalb von 1% überein."] : [],
     risks: deviation !== null && deviation > 1 ? [`Quellenabweichung von ${deviation.toFixed(3)}% überschreitet 1%.`] : [],
@@ -412,8 +416,13 @@ function calculateVolume(snapshot: MarketSnapshot): AgentResult {
   }
   const change = ((last24 - previous24) / previous24) * 100;
   const priceChange = snapshot.change24hPercent;
+  const priceSource = snapshot.sourceStatuses.find(
+    (source) =>
+      ["Binance · USDT ticker", "CoinGecko · EUR"].includes(source.source) &&
+      source.status === "live",
+  );
   const stance =
-    priceChange === null
+    priceChange === null || sourceStatus.status !== "live"
       ? "not_evaluable"
       : change > 20 && priceChange > 0
         ? "bullish"
@@ -423,15 +432,21 @@ function calculateVolume(snapshot: MarketSnapshot): AgentResult {
   return baseResult("volume-analyst", {
     stance,
     summary: `Abgeschlossenes Stundenvolumen: ${change >= 0 ? "+" : ""}${change.toFixed(1)}% gegenüber den vorherigen 24h.`,
-    confidence: sourceStatus.status === "live" ? Math.min(85, Math.round(Math.abs(change) * 1.2)) : Math.round(Math.abs(change) * 0.4),
+    confidence: sourceStatus.status === "live" ? (priceChange === null ? 67 : 100) : 0,
     bullishFactors: stance === "bullish" ? [`Volumen ${change.toFixed(1)}% höher bei positivem 24h-Preisverlauf.`] : [],
     bearishFactors: stance === "bearish" ? [`Volumen ${change.toFixed(1)}% höher bei negativem 24h-Preisverlauf.`] : [],
     risks: Math.abs(change) > 100 ? ["Ungewöhnlich starke Volumenänderung; Ausreißer oder Ereignis möglich."] : [],
     rationale: "Volumenänderung wird aus den letzten 24 gegenüber den vorherigen 24 abgeschlossenen Stundenkerzen berechnet.",
     evidence: [
       makeEvidence("24h quote-volume change", `${change >= 0 ? "+" : ""}${change.toFixed(1)}%`, sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status),
-      makeEvidence("Latest 24h quote volume", last24.toFixed(2), sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status),
-      ...(priceChange === null ? [] : [makeEvidence("24h price change", pct(priceChange), "Market quote", snapshot.generatedAt, aggregateDataStatus(snapshot.sourceStatuses))]),
+      makeEvidence("Latest 24h quote volume (USDT)", last24.toFixed(2), sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status),
+      ...(priceChange === null || !priceSource ? [] : [makeEvidence(
+        "24h price change",
+        priceChange.toFixed(2),
+        priceSource.source,
+        evidenceTimestamp(priceSource, snapshot.generatedAt),
+        priceSource.status,
+      )]),
     ],
     source: sourceStatus.source,
     dataStatus: sourceStatus.status,
@@ -448,7 +463,7 @@ function calculateRisk(snapshot: MarketSnapshot): {
   const candles = snapshot.dailyCandles;
   const closes = candles.map((candle) => candle.close).filter((value) => value > 0);
   const returns = closes.slice(1).map((close, index) => Math.log(close / closes[index]));
-  const dailyDeviation = stdev(returns.slice(-30));
+  const dailyDeviation = standardDeviation(returns.slice(-30));
   const volatility = dailyDeviation === null ? null : dailyDeviation * Math.sqrt(365) * 100;
   let peak = 0;
   let maxDrawdown = 0;
@@ -457,6 +472,14 @@ function calculateRisk(snapshot: MarketSnapshot): {
     if (peak > 0) maxDrawdown = Math.max(maxDrawdown, ((peak - close) / peak) * 100);
   }
   const deviation = snapshot.sourceDeviationPercent;
+  const deviationSources = snapshot.sourceStatuses.filter((source) =>
+    ["CoinGecko · USD", "Binance · USDT ticker"].includes(source.source),
+  );
+  const deviationObservedAt = deviationSources
+    .map((source) => source.observedAt)
+    .filter((value): value is string => value !== null)
+    .sort()
+    .at(-1) ?? snapshot.generatedAt;
   const hasEnoughData = volatility !== null && closes.length >= 30;
   const sourceStatus = snapshot.dailyStatus;
   const isEvaluable = hasEnoughData && sourceStatus.status === "live";
@@ -484,7 +507,7 @@ function calculateRisk(snapshot: MarketSnapshot): {
         : hasEnoughData
           ? "Nicht bewertbar: Die Tageskerzen sind nicht frisch genug für eine aktuelle Risikobewertung."
           : "Nicht bewertbar: Für Volatilität und Drawdown liegen nicht genügend Tageskerzen vor.",
-      confidence: isEvaluable && sourceStatus.status === "live" ? Math.min(90, Math.round(40 + closes.length / 5)) : 0,
+      confidence: isEvaluable ? Math.round((Math.min(closes.length, 90) / 90) * 100) : 0,
       bullishFactors: [],
       bearishFactors: [],
       risks: isEvaluable
@@ -499,7 +522,13 @@ function calculateRisk(snapshot: MarketSnapshot): {
         ? [
             makeEvidence("Annualized volatility, 30d", `${volatility!.toFixed(2)}%`, sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status),
             makeEvidence("Maximum drawdown, 90d", `${maxDrawdown.toFixed(2)}%`, sourceStatus.source, evidenceTimestamp(sourceStatus, snapshot.generatedAt), sourceStatus.status),
-            ...(deviation === null ? [] : [makeEvidence("Source deviation", `${deviation.toFixed(3)}%`, "CoinGecko USD vs Binance USDT", snapshot.generatedAt, "live")]),
+            ...(deviation === null ? [] : [makeEvidence(
+              "Source deviation",
+              `${deviation.toFixed(3)}%`,
+              "CoinGecko · USD + Binance · USDT ticker",
+              deviationObservedAt,
+              "live",
+            )]),
           ]
         : [],
       source: sourceStatus.source,
@@ -656,7 +685,6 @@ function makeGeminiSchema(): Record<string, unknown> {
         enum: ["bullish", "bearish", "neutral", "not_evaluable"],
       },
       summary: { type: "STRING" },
-      confidence: { type: "INTEGER" },
       bullishFactors: { type: "ARRAY", items: { type: "STRING" } },
       bearishFactors: { type: "ARRAY", items: { type: "STRING" } },
       risks: { type: "ARRAY", items: { type: "STRING" } },
@@ -666,7 +694,6 @@ function makeGeminiSchema(): Record<string, unknown> {
     required: [
       "stance",
       "summary",
-      "confidence",
       "bullishFactors",
       "bearishFactors",
       "risks",
@@ -679,7 +706,6 @@ function makeGeminiSchema(): Record<string, unknown> {
 type GeminiMarketResult = {
   stance: AgentResult["stance"];
   summary: string;
-  confidence: number;
   bullishFactors: string[];
   bearishFactors: string[];
   risks: string[];
@@ -696,9 +722,6 @@ function parseGeminiResult(text: string): GeminiMarketResult | null {
       !stances.includes(String(value.stance)) ||
       typeof value.summary !== "string" ||
       typeof value.rationale !== "string" ||
-      !Number.isInteger(value.confidence) ||
-      Number(value.confidence) < 0 ||
-      Number(value.confidence) > 100 ||
       !Array.isArray(value.evidenceIds) ||
       !Array.isArray(value.bullishFactors) ||
       !Array.isArray(value.bearishFactors) ||
@@ -823,24 +846,98 @@ async function runMarketScanner(
       stance === "not_evaluable" && parsed.stance !== "not_evaluable"
         ? "Nicht bewertbar: Gemini erhielt keine passende Live-Evidence für diese Einordnung."
         : parsed.summary,
-    confidence: evidence.length ? parsed.confidence : 0,
+    confidence: evidence.length
+      ? Math.round((evidence.filter((item) => item.dataStatus === "live").length / evidence.length) * 100)
+      : 0,
     bullishFactors: stance === "bullish" ? parsed.bullishFactors : [],
     bearishFactors: stance === "bearish" ? parsed.bearishFactors : [],
     risks: parsed.risks,
     rationale: parsed.rationale,
     evidence,
     source: geminiStatus.source,
-    dataStatus: "live",
+    dataStatus: hasLiveMarketEvidence
+      ? "live"
+      : evidence.some((item) => item.dataStatus === "stale")
+        ? "stale"
+        : "missing",
     dataSources: [geminiStatus, ...marketStatuses],
   });
 }
 
-function verifyResults(results: AgentResult[], snapshot: MarketSnapshot): AgentResult {
+export function verifyResults(results: AgentResult[], snapshot: MarketSnapshot): AgentResult {
   const sourceRows = snapshot.sourceStatuses;
   const sourceNames = new Set(sourceRows.map((source) => source.source));
   const findings: string[] = [];
   let checkedEvidence = 0;
-  let missingEvidence = 0;
+  let verifiedEvidence = 0;
+  let unverifiableEvidence = 0;
+  const technical = calculateTechnicalIndicators(snapshot.dailyCandles);
+  const momentum = calculateMomentumIndicators(snapshot.hourlyCandles);
+  const dailyCloses = snapshot.dailyCandles.map((candle) => candle.close).filter((value) => value > 0);
+  const dailyReturns = dailyCloses.slice(1).map((close, index) => Math.log(close / dailyCloses[index]));
+  const dailyVolatility = standardDeviation(dailyReturns.slice(-30));
+  const maxDrawdown90d = (() => {
+    let peak = 0;
+    let drawdown = 0;
+    for (const close of dailyCloses.slice(-90)) {
+      peak = Math.max(peak, close);
+      if (peak > 0) drawdown = Math.max(drawdown, ((peak - close) / peak) * 100);
+    }
+    return drawdown;
+  })();
+  const last24Volume = snapshot.hourlyCandles.slice(-24)
+    .reduce((sum, candle) => sum + candle.quoteVolume, 0);
+  const previous24Volume = snapshot.hourlyCandles.slice(-48, -24)
+    .reduce((sum, candle) => sum + candle.quoteVolume, 0);
+  const volumeChange = previous24Volume > 0
+    ? ((last24Volume - previous24Volume) / previous24Volume) * 100
+    : null;
+  const rawMetrics: Record<string, number | string | null> = {
+    "Daily close": technical.close,
+    "EMA 20": technical.ema20,
+    "EMA 50": technical.ema50,
+    "EMA 200": technical.ema200,
+    "SMA 20": technical.sma20,
+    "SMA 50": technical.sma50,
+    "RSI 14": technical.rsi14,
+    "MACD line": technical.macd,
+    "MACD signal": technical.macdSignal,
+    "MACD histogram": technical.macdHistogram,
+    "ATR 14": technical.atr14,
+    "ATR 14 percent": technical.atrPercent,
+    "Realized volatility 20d": technical.volatility20Percent,
+    "20d support": technical.support20,
+    "20d resistance": technical.resistance20,
+    "20d breakout": technical.breakout,
+    "Annualized volatility, 30d": dailyVolatility === null
+      ? null
+      : dailyVolatility * Math.sqrt(365) * 100,
+    "Maximum drawdown, 90d": dailyCloses.length >= 30 ? maxDrawdown90d : null,
+    Trend: technical.trend === "not_evaluable" ? null : technical.trend,
+    "6h price change": momentum.change6h,
+    "24h price change": snapshot.change24hPercent,
+    "24h quote-volume change": volumeChange,
+    "Latest 24h quote volume (USDT)": snapshot.hourlyCandles.length >= 24 ? last24Volume : null,
+    "Hourly volatility 24h": momentum.volatilityPercent,
+    "Momentum rating": momentum.rating,
+    "Hourly trend": momentum.trend === "not_evaluable" ? null : momentum.trend,
+    "Cross-source price deviation": snapshot.sourceDeviationPercent,
+    "Source deviation": snapshot.sourceDeviationPercent,
+    "24h change": snapshot.change24hPercent,
+  };
+  const numberFromEvidence = (value: string): number | null => {
+    const normalized = value.replaceAll(",", "").replace(/[€%+\s]/g, "");
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const evidenceSources = (sourceName: string): DataSourceStatus[] => {
+    if (sourceName === "CoinGecko · USD + Binance · USDT ticker") {
+      return sourceRows.filter((source) =>
+        ["CoinGecko · USD", "Binance · USDT ticker"].includes(source.source),
+      );
+    }
+    return sourceRows.filter((source) => source.source === sourceName);
+  };
   const directional = results.filter(
     (result) =>
       result.dataStatus === "live" &&
@@ -853,16 +950,57 @@ function verifyResults(results: AgentResult[], snapshot: MarketSnapshot): AgentR
   for (const result of results) {
     for (const item of result.evidence) {
       checkedEvidence += 1;
+      let verified = true;
       if (item.dataStatus === "missing") {
-        missingEvidence += 1;
+        verified = false;
         findings.push(`${result.displayName}: Beleg „${item.metric}“ ist als fehlend markiert.`);
-      } else if (!sourceNames.has(item.source) && !item.source.includes("Binance")) {
+      }
+      const evidenceStatusSources = evidenceSources(item.source);
+      if (!sourceNames.has(item.source) && evidenceStatusSources.length === 0) {
+        verified = false;
         findings.push(`${result.displayName}: Quelle „${item.source}“ ist nicht im aktuellen Quellenstatus enthalten.`);
       }
       if (!Number.isFinite(Date.parse(item.timestamp))) {
-        missingEvidence += 1;
+        verified = false;
         findings.push(`${result.displayName}: Beleg „${item.metric}“ hat keinen gültigen ISO-Zeitstempel.`);
       }
+      const expected = rawMetrics[item.metric];
+      if (expected === null || expected === undefined) {
+        unverifiableEvidence += 1;
+        verified = false;
+        findings.push(`${result.displayName}: Aussage „${item.metric}“ kann nicht aus dem gespeicherten Rohdaten-Snapshot geprüft werden.`);
+      } else if (typeof expected === "number") {
+        const observed = numberFromEvidence(item.value);
+        const decimalDigits = item.value.replaceAll(",", "").match(/\.(\d+)/)?.[1].length ?? 0;
+        const tolerance = Math.max(
+          0.5 * (10 ** -decimalDigits),
+          Math.abs(expected) * Number.EPSILON * 10,
+        );
+        if (observed === null || Math.abs(observed - expected) > tolerance) {
+          verified = false;
+          findings.push(`${result.displayName}: Beleg „${item.metric}“ stimmt nicht mit dem Rohdaten-Snapshot überein.`);
+        }
+      } else if (item.value !== expected) {
+        verified = false;
+        findings.push(`${result.displayName}: Beleg „${item.metric}“ stimmt nicht mit dem Rohdaten-Snapshot überein.`);
+      }
+      if (
+        item.dataStatus === "live" &&
+        (evidenceStatusSources.length === 0 ||
+          evidenceStatusSources.some((source) => source.status !== "live"))
+      ) {
+        verified = false;
+        findings.push(`${result.displayName}: Beleg „${item.metric}“ ist als live markiert, obwohl mindestens eine Rohdatenquelle stale oder missing ist.`);
+      }
+      if (
+        item.dataStatus === "live" &&
+        evidenceStatusSources.length > 0 &&
+        !evidenceStatusSources.some((source) => source.observedAt === item.timestamp)
+      ) {
+        verified = false;
+        findings.push(`${result.displayName}: Zeitstempel von „${item.metric}“ passt nicht zum Quellenzeitstempel.`);
+      }
+      if (verified) verifiedEvidence += 1;
     }
     for (const source of result.dataSources) {
       if (source.status === "stale") {
@@ -876,18 +1014,21 @@ function verifyResults(results: AgentResult[], snapshot: MarketSnapshot): AgentR
   const hasBull = directional.some((result) => result.stance === "bullish");
   const hasBear = directional.some((result) => result.stance === "bearish");
   if (hasBull && hasBear) findings.push("Widerspruch: Live-Daten-Agents liefern sowohl bullish als auch bearish.");
+  if (results.some((result) => result.agentId === "market-scanner" && result.evidence.length > 0)) {
+    findings.push("LLM-Zusammenfassungen sind Interpretation und keine unabhängig verifizierten Marktfakten.");
+  }
   if (!findings.length) findings.push("Alle vorliegenden Belege haben einen Zeitstempel und eine verfügbare Quellenzuordnung.");
   const status = results.some((result) => result.evidence.length > 0)
     ? aggregateDataStatus(sourceRows)
     : "missing";
   return baseResult("verification", {
     stance: hasBull && hasBear ? "neutral" : "not_evaluable",
-    summary: `${checkedEvidence} Belege geprüft; ${findings.length} konkrete Befunde.`,
-    confidence: checkedEvidence ? Math.max(0, 100 - missingEvidence * 20 - findings.filter((item) => item.includes("Widerspruch")).length * 25) : 0,
+    summary: `${checkedEvidence} Belege gegen Rohdaten geprüft; ${verifiedEvidence} bestätigt, ${unverifiableEvidence} nicht mechanisch prüfbar.`,
+    confidence: checkedEvidence ? Math.round((verifiedEvidence / checkedEvidence) * 100) : 0,
     bullishFactors: [],
     bearishFactors: [],
     risks: findings,
-    rationale: "Prüfung gegen gespeicherte Agent-Belege, Quellenstatus und Zeitstempel des aktuellen Runs.",
+    rationale: "Kennzahlen werden erneut aus den gespeicherten Candle-Rohdaten berechnet; Quelle, Zeitstempel, Freshness, Status und angegebener Wert werden separat geprüft.",
     evidence: [],
     source: "Run-Evidence + Rohdaten-Snapshot",
     dataStatus: status,
@@ -997,7 +1138,11 @@ function calculateScoreFactors(
 
 function weightedScores(factors: ScoreFactor[]): { longScore: number | null; shortScore: number | null } {
   const available = factors.filter(
-    (factor) => factor.value !== null && factor.weight > 0 && factor.dataStatus === "live",
+    (factor) =>
+      factor.name !== "risk" &&
+      factor.value !== null &&
+      factor.weight > 0 &&
+      factor.dataStatus === "live",
   );
   if (!available.length) return { longScore: null, shortScore: null };
   const totalWeight = available.reduce((sum, factor) => sum + factor.weight, 0);
@@ -1047,7 +1192,8 @@ export function buildFinalReport(
     independent.length >= 2 &&
     noDirectionalContradiction &&
     sourcesConcordant &&
-    riskScore !== null;
+    riskScore !== null &&
+    (results.find((result) => result.agentId === "verification")?.confidence ?? 0) >= 70;
   const scoreFactors = calculateScoreFactors(
     weights,
     indicators,
@@ -1068,12 +1214,23 @@ export function buildFinalReport(
     else decision = "neutral_wait";
   }
 
-  const liveEvidenceResults = analyticalResults.filter(
+  const confidenceResults = analyticalResults.filter((result) => result.agentId !== "market-scanner");
+  const liveEvidenceResults = confidenceResults.filter(
     (result) => result.dataStatus === "live" && result.evidence.length > 0,
   );
   const liveAgentCount = liveEvidenceResults.length;
-  const totalAgentCount = analyticalResults.length;
+  const totalAgentCount = confidenceResults.length;
   const coverageScore = totalAgentCount ? Math.round((liveAgentCount / totalAgentCount) * 100) : 0;
+  const observedSources = new Map(
+    snapshot.sourceStatuses.map((source) => [source.source, source.status]),
+  );
+  const freshnessScore = observedSources.size
+    ? Math.round(
+        ([...observedSources.values()].filter((status) => status === "live").length /
+          observedSources.size) *
+          100,
+      )
+    : 0;
   const directionalCount = independent.length;
   const agreementScore =
     directionalCount < 2
@@ -1085,6 +1242,8 @@ export function buildFinalReport(
     deviation === null || !hasLiveCoinGecko || !hasLiveBinance
       ? 0
       : Math.max(0, Math.round(100 - deviation * 40));
+  const contradictionCount = bullish.length * bearish.length;
+  const verificationScore = results.find((result) => result.agentId === "verification")?.confidence ?? 0;
   const liveSources = new Set(
     analyticalResults.flatMap((result) =>
       result.dataSources
@@ -1092,19 +1251,28 @@ export function buildFinalReport(
         .map((source) => source.source),
     ),
   );
-  let confidenceScore = Math.round(
-    coverageScore * 0.45 + agreementScore * 0.35 + sourceConsistencyScore * 0.2,
+  const confidenceScore = Math.max(
+    0,
+    Math.min(
+      100,
+      Math.round(
+        coverageScore * 0.25 +
+          freshnessScore * 0.2 +
+          agreementScore * 0.2 +
+          sourceConsistencyScore * 0.2 +
+          verificationScore * 0.15 -
+          contradictionCount * 10,
+      ),
+    ),
   );
-  if (liveAgentCount <= 2) confidenceScore = Math.min(confidenceScore, 25);
-  else confidenceScore = Math.min(confidenceScore, coverageScore + 15);
   const confidenceLabel =
     confidenceScore < 25
-      ? "Sehr niedrig · Datenbasis stark begrenzt"
+      ? "Sehr niedrig · Datenbasis stark begrenzt, keine Trefferwahrscheinlichkeit"
       : confidenceScore < 50
-        ? "Niedrig · Datenabdeckung begrenzt"
+        ? "Niedrig · Datenabdeckung begrenzt, keine Trefferwahrscheinlichkeit"
         : confidenceScore < 70
-          ? "Begrenzt · Quellen nicht vollständig"
-          : "Moderat · mehrere Quellen verfügbar";
+          ? "Begrenzt · Quellen nicht vollständig, keine Trefferwahrscheinlichkeit"
+          : "Moderat · mehrere Quellen verfügbar, keine Trefferwahrscheinlichkeit";
 
   const mainReasons = independent.flatMap((result) =>
     result.stance === (bullish.length ? "bullish" : "bearish")
@@ -1124,6 +1292,7 @@ export function buildFinalReport(
       .filter((result) => result.dataStatus === "missing")
       .map((result) => `${result.displayName}: Datenquelle fehlt.`)
       .slice(0, 4),
+    ...(results.find((result) => result.agentId === "verification")?.risks ?? []).slice(0, 4),
   ];
   if (!mainReasons.length) mainReasons.push("Keine ausreichende Anzahl unabhängiger, live-datenbasierter Agents mit übereinstimmender Einordnung.");
   if (!counterArguments.length) counterArguments.push("Es wurde kein direkter Richtungswiderspruch gefunden; fehlende Agentenquellen bleiben jedoch ein Unsicherheitsfaktor.");
@@ -1134,19 +1303,62 @@ export function buildFinalReport(
       : `Datenbasierte technische Einordnung: ${decision.replaceAll("_", " ").toUpperCase()}. Keine Anlageberatung und keine Handelsanweisung.`;
   const invalidation =
     indicators.close !== null && indicators.ema50 !== null
-      ? `Die aktuelle technische Einordnung wäre neu zu prüfen, wenn der Kurs die Tages-EMA 50 (${money(indicators.ema50)}) nachhaltig in Gegenrichtung durchbricht.`
-      : "Keine belastbare Invalidierung ableitbar, da EMA 50 oder Schlusskurs fehlt.";
+      ? `Kauf-Idee stimmt nicht mehr unter der Tages-EMA 50 (${money(indicators.ema50)}), sofern ein abgeschlossener Tageskurs darunter liegt.`
+      : "Kauf-Idee stimmt nicht mehr unter dem letzten bestätigten Tages-Schlusskurs; eine belastbare Schwelle fehlt, da EMA 50 oder Kerzen fehlen.";
   const confidenceBreakdown: ConfidenceBreakdown = {
     coverageScore,
+    freshnessScore,
     agreementScore,
     sourceConsistencyScore,
+    verificationScore,
+    confirmationCount: independent.length,
+    contradictionCount,
     liveAgentCount,
     totalAgentCount,
     liveSourceCount: liveSources.size,
     totalSourceCount: new Set(analyticalResults.flatMap((result) => result.dataSources.map((source) => source.source))).size,
-    methodology: "45% Live-Evidence-Abdeckung + 35% Übereinstimmung der datenbasierten Richtungs-Agents + 20% CoinGecko/Binance-Konsistenz; bei geringer Abdeckung zusätzlich begrenzt.",
+    methodology: "Qualitätsindex, keine Trefferwahrscheinlichkeit: 25% Live-Evidence-Abdeckung + 20% Frische + 20% Richtungsübereinstimmung + 20% Quellenkonsistenz + 15% Rohdaten-Verifikation minus 10 Punkte je gegensätzlichem Agentenpaar. Gemini-Aussagen zählen nicht als Rohdaten-Evidence.",
   };
+  const stance: FinalReport["stance"] = decision.includes("long")
+    ? "bullish"
+    : decision.includes("short")
+      ? "bearish"
+      : decision === "neutral_wait"
+        ? "neutral"
+        : "not_evaluable";
+  const radarState: FinalReport["radarState"] =
+    (decision === "long" || decision === "strong_long") &&
+    confidenceScore >= 50 &&
+    riskScore !== null &&
+    riskScore < 60
+      ? "attractive_risk_reward"
+      : decision === "no_clear_signal" || decision === "short" || decision === "strong_short"
+        ? "stand_aside"
+        : "observe";
+  const evidence = [...new Map(
+    analyticalResults.flatMap((result) =>
+      result.evidence.map((item) => [`${item.metric}:${item.source}:${item.timestamp}`, item] as const),
+    ),
+  ).values()];
   return {
+    stance,
+    radarState,
+    generatedAt: snapshot.generatedAt,
+    dataStatus: aggregateDataStatus(snapshot.sourceStatuses),
+    currentData: {
+      asset: snapshot.asset,
+      priceEur: snapshot.priceEur,
+      priceUsd: snapshot.priceUsd,
+      change24hPercent: snapshot.change24hPercent,
+      change7dPercent: snapshot.change7dPercent,
+      volume24hEur: snapshot.volume24hEur,
+      marketCapEur: snapshot.marketCapEur,
+      sourceDeviationPercent: snapshot.sourceDeviationPercent,
+      hourlyCandleAt: snapshot.hourlyStatus.observedAt,
+      dailyCandleAt: snapshot.dailyStatus.observedAt,
+      sourceStatuses: snapshot.sourceStatuses,
+    },
+    evidence,
     decision,
     summary,
     confidenceScore,
@@ -1214,24 +1426,17 @@ export function analyzeMarketSnapshot(
 }
 
 function finalAgent(report: FinalReport): AgentResult {
-  const stance: AgentResult["stance"] =
-    report.decision.includes("long")
-      ? "bullish"
-      : report.decision.includes("short")
-        ? "bearish"
-        : report.decision === "neutral_wait"
-          ? "neutral"
-          : "not_evaluable";
   return baseResult("final-decision", {
-    stance,
+    stance: report.stance,
     summary: report.summary,
     confidence: report.confidenceScore,
     bullishFactors: report.decision.includes("long") ? report.mainReasons : [],
     bearishFactors: report.decision.includes("short") ? report.mainReasons : [],
     risks: report.counterArguments,
     rationale: `Risk Score: ${report.riskScore ?? "nicht bewertbar"}/100. ${report.invalidation}`,
+    evidence: report.evidence,
     source: "Verified run outputs + weighted score",
-    dataStatus: report.confidenceBreakdown.liveAgentCount > 0 ? "live" : "missing",
+    dataStatus: report.dataStatus,
     dataSources: [],
   });
 }
@@ -1348,7 +1553,7 @@ export async function executeAnalysisRun(input: {
       rationale: "Ergebnisse werden nach Quellenqualität, Datenabdeckung, Widersprüchen und Risiko gewichtet; kein Mehrheitsentscheid.",
       evidence: [],
       source: "Server-side orchestration",
-      dataStatus: report.confidenceBreakdown.liveAgentCount > 0 ? "live" : "missing",
+      dataStatus: report.dataStatus,
       dataSources: snapshot.sourceStatuses,
     });
     await executeAgent(

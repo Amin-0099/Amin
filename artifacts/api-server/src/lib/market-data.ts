@@ -322,6 +322,7 @@ function buildRadarAssets(
         dataStatus: "missing",
         sourceStatuses: [status],
         radarScore: null,
+        momentumRating: null,
         signal: null,
         sparkline: [],
       };
@@ -432,6 +433,7 @@ function buildRadarAssets(
       dataStatus,
       sourceStatuses,
       radarScore: computeRadarScore(change24hPercent, volume24hEur, marketCapEur),
+      momentumRating: null,
       signal: null,
       sparkline:
         cgEurStatus.status === "live" && Array.isArray(eur?.sparkline_in_7d?.price)
@@ -493,7 +495,7 @@ export async function getRadarAssets(forceRefresh = false): Promise<MarketAsset[
 
 export function parseCandles(data: unknown): Candle[] {
   if (!Array.isArray(data)) return [];
-  return data
+  const parsed = data
     .flatMap((row): Candle[] => {
       if (!Array.isArray(row) || row.length < 8) return [];
       const values = row.slice(0, 8).map(finiteNumber);
@@ -529,6 +531,19 @@ export function parseCandles(data: unknown): Candle[] {
         quoteVolume: rawQuoteVolume,
       }];
     });
+  return [...new Map(parsed.map((candle) => [candle.openTime, candle])).values()]
+    .sort((left, right) => left.openTime - right.openTime);
+}
+
+export function haveContinuousCandles(
+  candles: Candle[],
+  interval: "1h" | "1d",
+): boolean {
+  const expectedIntervalMs = interval === "1h" ? 60 * 60 * 1_000 : 24 * 60 * 60 * 1_000;
+  return candles.every((candle, index) =>
+    candle.closeTime < candle.openTime + expectedIntervalMs &&
+    (index === 0 || candle.openTime - candles[index - 1].openTime === expectedIntervalMs),
+  );
 }
 
 async function getCandles(
@@ -557,6 +572,18 @@ async function getCandles(
     const failure = {
       data: null,
       status: missingStatus(source, result.status.detail || "No completed candles were returned.", checkedAt),
+    };
+    candleCache.set(cacheKey, { value: failure, expiresAt: Date.now() + CANDLE_CACHE_MS });
+    return failure;
+  }
+  if (!haveContinuousCandles(candles, interval)) {
+    const failure = {
+      data: null,
+      status: missingStatus(
+        source,
+        "The provider returned an incomplete candle interval; indicators were not calculated from the gapped series.",
+        checkedAt,
+      ),
     };
     candleCache.set(cacheKey, { value: failure, expiresAt: Date.now() + CANDLE_CACHE_MS });
     return failure;

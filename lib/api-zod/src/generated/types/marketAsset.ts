@@ -29,6 +29,8 @@ export interface MarketAsset {
   sourceStatuses: DataSourceStatus[];
   /** @nullable */
   radarScore: number | null;
+  /** @nullable */
+  momentumRating: number | null;
   signal: FinalReport | null;
   sparkline: number[];
 }

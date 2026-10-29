@@ -6,8 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { MarketAsset } from './marketAsset';
+import type { RadarResponseLearningStatus } from './radarResponseLearningStatus';
 
 export interface RadarResponse {
   generatedAt: string;
+  learningStatus: RadarResponseLearningStatus;
   assets: MarketAsset[];
 }

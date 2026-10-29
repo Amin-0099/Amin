@@ -53,10 +53,22 @@ type PaperSignalAgent = {
 
 export function hasActionablePaperSignal(
   side: "long" | "short",
-  report: Pick<FinalReport, "decision" | "confidenceBreakdown"> | null,
+  report: {
+    decision: FinalReport["decision"];
+    dataStatus: FinalReport["dataStatus"];
+    confidenceBreakdown: Pick<
+      FinalReport["confidenceBreakdown"],
+      "liveAgentCount" | "verificationScore"
+    >;
+  } | null,
   agents: PaperSignalAgent[],
 ): boolean {
-  if (!report || report.confidenceBreakdown.liveAgentCount < 1) return false;
+  if (
+    !report ||
+    report.dataStatus !== "live" ||
+    report.confidenceBreakdown.liveAgentCount < 1 ||
+    report.confidenceBreakdown.verificationScore < 70
+  ) return false;
   const allowedDecisions = side === "long"
     ? ["long", "strong_long"]
     : ["short", "strong_short"];
@@ -81,10 +93,24 @@ function priceSources(snapshot: MarketSnapshot | undefined) {
   );
 }
 
-function priceStatus(snapshot: MarketSnapshot | undefined): PaperPosition["currentPriceDataStatus"] {
+export function getPaperPriceDataStatus(
+  snapshot: Pick<MarketSnapshot, "sourceStatuses" | "priceEur" | "priceEurObserved"> | undefined,
+): PaperPosition["currentPriceDataStatus"] {
   if (!snapshot) return "missing";
-  if (snapshot.priceEur !== null) return "live";
-  if (snapshot.priceEurObserved !== null) return "stale";
+  const liveCoinGeckoPrice = snapshot.sourceStatuses.some(
+    (source) => source.source === "CoinGecko · EUR" && source.status === "live",
+  );
+  const liveBinancePrice = snapshot.sourceStatuses.some(
+    (source) => source.source === "Binance · USDT ticker" && source.status === "live",
+  );
+  const liveBinanceConversion = snapshot.sourceStatuses.some(
+    (source) => source.source === "Binance · EURUSDT conversion" && source.status === "live",
+  );
+  if (
+    snapshot.priceEur !== null &&
+    (liveCoinGeckoPrice || (liveBinancePrice && liveBinanceConversion))
+  ) return "live";
+  if (snapshot.priceEurObserved !== null || snapshot.priceEur !== null) return "stale";
   return "missing";
 }
 
@@ -113,7 +139,7 @@ function mapTrade(
     quantity,
     entryPriceEur: entry,
     currentPriceEur: price,
-    currentPriceDataStatus: isClosed ? "missing" : priceStatus(snapshot),
+    currentPriceDataStatus: isClosed ? "missing" : getPaperPriceDataStatus(snapshot),
     priceSources: isClosed ? [] : priceSources(snapshot),
     stopLossEur: trade.stopLossEur === null ? null : asMoney(trade.stopLossEur),
     takeProfitEur: trade.takeProfitEur === null ? null : asMoney(trade.takeProfitEur),

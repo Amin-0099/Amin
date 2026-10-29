@@ -198,6 +198,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RadarResponse"
+  /radar/performance:
+    get:
+      operationId: getRadarPerformance
+      tags: [market]
+      summary: Get outcome-based performance of recorded radar signals
+      responses:
+        "200":
+          description: Recorded outcome aggregates by asset, signal type, and horizon
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadarPerformanceResponse"
+        "503":
+          description: Signal evaluation data is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /paper/portfolio:
     get:
       operationId: getPaperPortfolio
@@ -537,9 +555,17 @@ components:
       properties:
         coverageScore:
           type: integer
+        freshnessScore:
+          type: integer
         agreementScore:
           type: integer
         sourceConsistencyScore:
+          type: integer
+        verificationScore:
+          type: integer
+        confirmationCount:
+          type: integer
+        contradictionCount:
           type: integer
         liveAgentCount:
           type: integer
@@ -551,7 +577,7 @@ components:
           type: integer
         methodology:
           type: string
-      required: [coverageScore, agreementScore, sourceConsistencyScore, liveAgentCount, totalAgentCount, liveSourceCount, totalSourceCount, methodology]
+      required: [coverageScore, freshnessScore, agreementScore, sourceConsistencyScore, verificationScore, confirmationCount, contradictionCount, liveAgentCount, totalAgentCount, liveSourceCount, totalSourceCount, methodology]
     ScoreFactor:
       type: object
       properties:
@@ -566,9 +592,56 @@ components:
         explanation:
           type: string
       required: [name, value, weight, dataStatus, explanation]
+    MarketCurrentData:
+      type: object
+      properties:
+        asset:
+          $ref: "#/components/schemas/AssetCode"
+        priceEur:
+          type: [number, "null"]
+        priceUsd:
+          type: [number, "null"]
+        change24hPercent:
+          type: [number, "null"]
+        change7dPercent:
+          type: [number, "null"]
+        volume24hEur:
+          type: [number, "null"]
+        marketCapEur:
+          type: [number, "null"]
+        sourceDeviationPercent:
+          type: [number, "null"]
+        hourlyCandleAt:
+          type: [string, "null"]
+          format: date-time
+        dailyCandleAt:
+          type: [string, "null"]
+          format: date-time
+        sourceStatuses:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataSourceStatus"
+      required: [asset, priceEur, priceUsd, change24hPercent, change7dPercent, volume24hEur, marketCapEur, sourceDeviationPercent, hourlyCandleAt, dailyCandleAt, sourceStatuses]
     FinalReport:
       type: object
       properties:
+        stance:
+          type: string
+          enum: [bullish, bearish, neutral, not_evaluable]
+        radarState:
+          type: string
+          enum: [stand_aside, observe, attractive_risk_reward]
+        generatedAt:
+          type: string
+          format: date-time
+        dataStatus:
+          $ref: "#/components/schemas/DataStatus"
+        currentData:
+          $ref: "#/components/schemas/MarketCurrentData"
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentEvidence"
         decision:
           type: string
           enum: [strong_long, long, neutral_wait, short, strong_short, no_clear_signal]
@@ -604,7 +677,7 @@ components:
             $ref: "#/components/schemas/ScoreFactor"
         confidenceBreakdown:
           $ref: "#/components/schemas/ConfidenceBreakdown"
-      required: [decision, summary, confidenceScore, confidenceLabel, riskScore, mainReasons, counterArguments, invalidation, longScore, shortScore, scoreFactors, confidenceBreakdown]
+      required: [stance, radarState, generatedAt, dataStatus, currentData, evidence, decision, summary, confidenceScore, confidenceLabel, riskScore, mainReasons, counterArguments, invalidation, longScore, shortScore, scoreFactors, confidenceBreakdown]
     AnalysisRun:
       type: object
       properties:
@@ -700,6 +773,8 @@ components:
             $ref: "#/components/schemas/DataSourceStatus"
         radarScore:
           type: [number, "null"]
+        momentumRating:
+          type: [number, "null"]
         signal:
           oneOf:
             - $ref: "#/components/schemas/FinalReport"
@@ -708,18 +783,70 @@ components:
           type: array
           items:
             type: number
-      required: [symbol, name, category, priceEur, change24hPercent, change7dPercent, volume24hEur, marketCapEur, dataStatus, sourceStatuses, radarScore, signal, sparkline]
+      required: [symbol, name, category, priceEur, change24hPercent, change7dPercent, volume24hEur, marketCapEur, dataStatus, sourceStatuses, radarScore, momentumRating, signal, sparkline]
     RadarResponse:
       type: object
       properties:
         generatedAt:
           type: string
           format: date-time
+        learningStatus:
+          type: string
+          enum: [saved, unavailable]
         assets:
           type: array
           items:
             $ref: "#/components/schemas/MarketAsset"
-      required: [generatedAt, assets]
+      required: [generatedAt, learningStatus, assets]
+    RadarPerformanceItem:
+      type: object
+      properties:
+        asset:
+          $ref: "#/components/schemas/AssetCode"
+        signalType:
+          type: string
+        stance:
+          type: string
+          enum: [bullish, bearish, neutral, not_evaluable]
+        horizonHours:
+          type: integer
+          enum: [1, 24, 168]
+        sampleCount:
+          type: integer
+          minimum: 0
+        directionalSampleCount:
+          type: integer
+          minimum: 0
+        hits:
+          type: integer
+          minimum: 0
+        hitRatePercent:
+          type: [number, "null"]
+        averageReturnPercent:
+          type: number
+      required: [asset, signalType, stance, horizonHours, sampleCount, directionalSampleCount, hits, hitRatePercent, averageReturnPercent]
+    RadarPerformanceResponse:
+      type: object
+      properties:
+        performance:
+          type: array
+          items:
+            $ref: "#/components/schemas/RadarPerformanceItem"
+        errorSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/RadarErrorSource"
+      required: [performance, errorSources]
+    RadarErrorSource:
+      type: object
+      properties:
+        category:
+          type: string
+          enum: [missing_data, stale_data, source_disagreement, verification_mismatch, signal_conflict]
+        signalCount:
+          type: integer
+          minimum: 0
+      required: [category, signalCount]
     PaperPosition:
       type: object
       properties:
@@ -953,4 +1080,3 @@ components:
         scoreWeights:
           $ref: "#/components/schemas/ScoreWeights"
       required: [accountId, startingBalanceEur, scoreWeights]
-
